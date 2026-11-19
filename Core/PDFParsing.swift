@@ -200,8 +200,15 @@ enum PDFParsing {
             let values = marks.filter(marked).map { "\($0.rawValue) \(contents($0))" }
             let employee = contents(.employee)
             let quality = ([anchor] + cells.values.flatMap { $0 }).map(\.confidence).min() ?? 0
+            let fieldSources = Dictionary(uniqueKeysWithValues: cells.compactMap { key, values -> (String, Source)? in
+                guard let first = values.first else { return nil }
+                let rect = values.dropFirst().reduce(first.box) { $0.union($1.box) }
+                return (key.rawValue, Source(page: page, x: rect.minX, y: rect.minY, width: rect.width,
+                                             height: rect.height, confidence: values.map(\.confidence).min() ?? 0))
+            })
             return Room(number: roomNumber, kind: kind, employee: employee, guests: guests, notes: contents(.notes),
                         marks: values, source: Source(page: page, x: 0, y: bottom, width: 1, height: top - bottom, confidence: quality),
+                        fieldSources: fieldSources,
                         needsReview: kind == .unknown || best == 0 || quality < 0.85 ||
                             (!guestText.isEmpty && guests == nil) || columns[.employee] == nil ||
                             (roomNumber == "1103" && kind.full && guests == nil))

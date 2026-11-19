@@ -99,6 +99,7 @@ struct Room: Codable, Identifiable, Equatable {
     var notes = ""
     var marks: [String] = []
     var source: Source?
+    var fieldSources: [String: Source]?
     var revision: String?
     var needsReview = false
     var removed = false

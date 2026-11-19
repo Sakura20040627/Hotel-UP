@@ -85,6 +85,17 @@ struct Review: View {
                                 preview = PDFPreview(url: draft.url, source: source)
                             }
                         }
+                        if let sources = room.fieldSources, !sources.isEmpty {
+                            Menu("查看识别字段位置") {
+                                ForEach(sources.keys.sorted(), id: \.self) { field in
+                                    if let source = sources[field] {
+                                        Button("\(field) · \(Int(source.confidence * 100))%") {
+                                            preview = PDFPreview(url: draft.url, source: source)
+                                        }
+                                    }
+                                }
+                            }
+                        }
                         Button("从本版移除此行", role: .destructive) {
                             let id = room.id
                             draft.rooms.removeAll { $0.id == id }

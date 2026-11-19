@@ -15,9 +15,7 @@ final class RulesTests: XCTestCase {
         ].filter(settings.owns)
         XCTAssertEqual(rooms.count, 3)
         XCTAssertEqual(rooms.filter { $0.kind == .turnover }.count, 1)
-        let counts = rooms.reduce(into: [Supply: Int]()) {
-            $0.merge(SupplyEngine.requirement(for: $1, settings: settings).counts, uniquingKeysWith: +)
-        }
+        let counts = SupplyEngine.summary(for: rooms, settings: settings).counts
         XCTAssertEqual(counts, [.doubleCover: 3, .doubleSheet: 3, .singleCover: 5, .singleSheet: 5,
                                 .pillow: 11, .towel: 11, .handTowel: 11, .toothbrush: 11, .mat: 3])
     }

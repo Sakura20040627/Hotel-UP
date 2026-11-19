@@ -305,25 +305,23 @@ struct Dashboard: View {
 
     private var suppliesView: some View {
         let rooms = remaining ? personal.filter { $0.work.stage != .done } : personal
-        let requirements = rooms.map { SupplyEngine.requirement(for: $0, settings: ledger.settings) }
-        let required = requirements.reduce(0) { $0 + $1.counts.values.reduce(0, +) }
-        let ready = zip(rooms, requirements).reduce(0) { total, pair in
-            total + pair.1.counts.reduce(0) { $0 + min($1.value, pair.0.prepared[$1.key, default: 0]) }
-        }
+        let summary = SupplyEngine.summary(for: rooms, settings: ledger.settings)
         return List {
             Section {
                 Toggle("仅显示未完成任务", isOn: $remaining)
-                ProgressView(value: Double(ready), total: Double(max(required, 1))) {
-                    Text("已准备 \(ready)/\(required) 件已确定物资")
+                ProgressView(value: Double(summary.ready), total: Double(max(summary.required, 1))) {
+                    Text("已准备 \(summary.ready)/\(summary.required) 件已确定物资")
                 }
-                ForEach(rooms.filter { SupplyEngine.requirement(for: $0, settings: ledger.settings).warning != nil }) { room in
-                    NavigationLink { roomDetail(room.id) } label: { Text("\(room.number) · \(SupplyEngine.requirement(for: room, settings: ledger.settings).warning ?? "")") }
+                ForEach(rooms) { room in
+                    if let warning = summary.warnings[room.id] {
+                        NavigationLink { roomDetail(room.id) } label: { Text("\(room.number) · \(warning)") }
+                    }
                 }
             }
             ForEach([true, false], id: \.self) { linen in
                 Section(linen ? "床上用品" : "客房备品") {
                     ForEach(Supply.allCases.filter { $0.linen == linen }) { item in
-                        LabeledContent(item.rawValue, value: String(requirements.reduce(0) { $0 + $1.counts[item, default: 0] }))
+                        LabeledContent(item.rawValue, value: String(summary.counts[item, default: 0]))
                     }
                 }
             }

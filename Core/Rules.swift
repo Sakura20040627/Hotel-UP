@@ -143,7 +143,25 @@ struct Requirement {
     var warning: String?
 }
 
+struct SupplySummary {
+    var counts: [Supply: Int] = [:]
+    var ready = 0
+    var warnings: [UUID: String] = [:]
+    var required: Int { counts.values.reduce(0, +) }
+}
+
 enum SupplyEngine {
+    static func summary(for rooms: [Room], settings: Settings) -> SupplySummary {
+        rooms.reduce(into: SupplySummary()) { summary, room in
+            let need = requirement(for: room, settings: settings)
+            summary.counts.merge(need.counts, uniquingKeysWith: +)
+            summary.ready += need.counts.reduce(0) { total, entry in
+                total + min(entry.value, room.prepared[entry.key, default: 0])
+            }
+            summary.warnings[room.id] = need.warning
+        }
+    }
+
     static func requirement(for room: Room, settings: Settings) -> Requirement {
         let capacity: Int? = switch room.type {
         case .triple: 3

@@ -16,20 +16,12 @@ jobs:
       HOTELFLOW_BUNDLE_ID: ${{ vars.HOTELFLOW_BUNDLE_ID || 'com.hotelflow.ios' }}
       HOTELFLOW_APP_GROUP: ${{ vars.HOTELFLOW_APP_GROUP || 'group.com.hotelflow.ios' }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       - name: Select Xcode and print versions
         shell: bash
         run: |
           set -euo pipefail
-          found=
-          for candidate in /Applications/Xcode*.app; do
-            developer="$candidate/Contents/Developer"
-            sdk="$(DEVELOPER_DIR="$developer" xcrun --sdk iphoneos --show-sdk-version 2>/dev/null)" || continue
-            if [[ "$sdk" == 26.* ]]; then
-              found="$developer"
-              break
-            fi
-          done
+          found="$(python3 ci/select-xcode.py)"
           test -n "$found"
           echo "DEVELOPER_DIR=$found" >> "$GITHUB_ENV"
           export DEVELOPER_DIR="$found"
@@ -78,18 +70,18 @@ jobs:
           HOTELFLOW_APP_PROFILE: ${{ secrets.HOTELFLOW_APP_PROFILE }}
           HOTELFLOW_SHARE_PROFILE: ${{ secrets.HOTELFLOW_SHARE_PROFILE }}
         run: bash ci/sign.sh
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v5
         with:
           name: HotelFlow-unsigned-IPA
           path: build/HotelFlow-unsigned.ipa
           if-no-files-found: error
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v5
         if: github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main' && vars.HOTELFLOW_SIGN_ENABLED == 'true'
         with:
           name: HotelFlow-signed-IPA
           path: build/HotelFlow-signed.ipa
           if-no-files-found: error
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v5
         if: always()
         with:
           name: HotelFlow-build-and-test-logs

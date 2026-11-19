@@ -16,9 +16,17 @@ enum PDFInput {
         guard url.isFileURL else { throw Failure.invalid }
         let scope = url.startAccessingSecurityScopedResource()
         defer { if scope { url.stopAccessingSecurityScopedResource() } }
-        let data = try Data(contentsOf: url)
-        try validate(data)
-        return data
+        var coordinationError: NSError?
+        var result: Result<Data, Error>?
+        NSFileCoordinator().coordinate(readingItemAt: url, options: [], error: &coordinationError) { readableURL in
+            result = Result {
+                let data = try Data(contentsOf: readableURL)
+                try validate(data)
+                return data
+            }
+        }
+        if let result { return try result.get() }
+        throw coordinationError ?? CocoaError(.fileReadUnknown) as NSError
     }
 
     static func validate(_ data: Data) throws {

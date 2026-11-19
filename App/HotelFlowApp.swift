@@ -69,6 +69,7 @@ struct Dashboard: View {
     @State private var draft: Draft?
     @State private var preview: PDFPreview?
     @State private var message: String?
+    @State private var importStatus: String?
     @State private var busy = false
     @State private var historyDate = Date()
     @State private var filterHistory = false
@@ -84,6 +85,27 @@ struct Dashboard: View {
     }
 
     var body: some View {
+        Group {
+            if let draft {
+                reviewSheet(draft).id(draft.id)
+            } else {
+                dashboardTabs
+            }
+        }
+        .task { load(); checkInbox() }
+        .onChange(of: phase) { _, value in if value == .active { checkInbox() } }
+        .onChange(of: draft == nil) { _, clear in if clear { checkInbox() } }
+        .onOpenURL { url in
+            load()
+            selectedTab = 0
+            importFile(url, pending: false)
+        }
+        .alert("HotelFlow", isPresented: Binding(get: { message != nil }, set: { if !$0 { message = nil } })) {
+            Button("好") { message = nil; checkInbox() }
+        } message: { Text(message ?? "") }
+    }
+
+    private var dashboardTabs: some View {
         TabView(selection: $selectedTab) {
             NavigationStack { todayView }
                 .tabItem { Label("今日", systemImage: "checklist") }.tag(0)
@@ -92,11 +114,6 @@ struct Dashboard: View {
             NavigationStack { historyView }
                 .tabItem { Label("历史", systemImage: "clock.arrow.circlepath") }.tag(2)
         }
-        .task { load(); checkInbox() }
-        .onChange(of: phase) { _, value in if value == .active { checkInbox() } }
-        .alert("HotelFlow", isPresented: Binding(get: { message != nil }, set: { if !$0 { message = nil } })) {
-            Button("好") { message = nil; checkInbox() }
-        } message: { Text(message ?? "") }
         .fileImporter(isPresented: $showingImporter, allowedContentTypes: importingBackup ? [.json] : [.pdf, .data]) { result in
             switch result {
             case .success(let url):
@@ -110,7 +127,8 @@ struct Dashboard: View {
                     importFile(url, pending: false)
                 }
             case .failure:
-                message = importingBackup ? "无法读取备份。" : "系统未能打开该文件。请确认 PDF 已下载后重试。"
+                if importingBackup { message = "无法读取备份。" }
+                else { importStatus = "系统未能打开文件。请确认 PDF 已下载后重试。" }
             }
         }
         .fileExporter(isPresented: $export, document: backup, contentType: .json, defaultFilename: "HotelFlow-Backup") { result in
@@ -122,7 +140,6 @@ struct Dashboard: View {
             Button("恢复备份", role: .destructive) { if let restoreCandidate { restoreBackup(restoreCandidate) }; restoreCandidate = nil }
         }
         .sheet(isPresented: $settings) { settingsView }
-        .sheet(item: $draft, onDismiss: { checkInbox() }) { value in reviewSheet(value) }
         .sheet(item: $preview) { value in
             NavigationStack {
                 PDFPositionView(url: value.url, source: value.source)
@@ -153,7 +170,14 @@ struct Dashboard: View {
                     showingImporter = true
                 }
                     .disabled(blocked || busy || draft != nil)
-                if busy { ProgressView("正在本地识别 PDF") }
+                if let importStatus {
+                    if busy { ProgressView(importStatus) }
+                    else {
+                        Text(importStatus).font(.subheadline)
+                            .foregroundStyle(.secondary)
+                            .textSelection(.enabled)
+                    }
+                }
             }
             Section("我的房间") {
                 ForEach(personal) { room in
@@ -494,6 +518,7 @@ struct Dashboard: View {
             return
         }
         busy = true
+        importStatus = "正在读取 PDF…"
         Task {
             defer { busy = false }
             do {
@@ -503,19 +528,23 @@ struct Dashboard: View {
                 let id = Inbox.digest(data)
                 if ledger.days.contains(where: { $0.revisions.contains { $0.id == id } }) {
                     if pending { try FileManager.default.removeItem(at: source) }
-                    else { message = "此 PDF 已导入。" }
+                    else { importStatus = "这份 PDF 已导入，可在「历史」查看。" }
                     busy = false
-                    checkInbox()
+                    if pending { checkInbox() }
                     return
                 }
+                importStatus = "已读取 PDF，正在识别清扫表…"
                 let parsed = try await Task.detached(priority: .userInitiated) { try PDFParsing.parse(data) }.value
                 let url = try pdfURL(id)
                 try data.write(to: url, options: [.atomic, .completeFileProtectionUntilFirstUserAuthentication])
+                importStatus = nil
                 draft = Draft(id: id, date: parsed.date ?? today, dateConfirmed: parsed.date != nil,
                               rooms: parsed.rooms, unresolved: parsed.unresolved, url: url, pending: pending ? source : nil)
             } catch {
                 if pending { rejected.insert(source) }
-                message = (error as? PDFInput.Failure)?.errorDescription ?? "无法打开或保存 PDF。请先将文件保存到本机「文件」App，再重试。"
+                let detail = (error as? PDFInput.Failure)?.errorDescription ?? "无法打开或保存 PDF。请先将文件保存到本机「文件」App，再重试。"
+                importStatus = detail
+                if pending { message = detail }
             }
         }
     }
@@ -539,6 +568,7 @@ struct Dashboard: View {
             }
             if save(next) {
                 if let pending = confirmed.pending { try? FileManager.default.removeItem(at: pending) }
+                importStatus = "已导入清扫表 · \(rooms.count) 间房"
                 draft = nil
                 selectedTab = date == today ? 0 : 2
                 if date != today {
@@ -549,6 +579,7 @@ struct Dashboard: View {
         } cancel: {
             if let pending = value.pending { rejected.insert(pending) }
             try? FileManager.default.removeItem(at: value.url)
+            importStatus = "已取消校对。"
             draft = nil
         }
     }

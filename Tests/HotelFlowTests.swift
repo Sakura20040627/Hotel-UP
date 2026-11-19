@@ -177,4 +177,23 @@ final class RulesTests: XCTestCase {
         let remote = URL(string: "https://example.com/example.pdf")!
         XCTAssertThrowsError(try PDFInput.read(remote))
     }
+
+    func testHotelGridWithSplitHeadersAndInlineGuestCount() {
+        func token(_ text: String, _ x: CGFloat, _ y: CGFloat) -> Token {
+            Token(text: text, box: CGRect(x: x - 0.008, y: y - 0.005, width: 0.016, height: 0.010), confidence: 1)
+        }
+        let rooms = PDFParsing.rows([
+            token("Room", 0.060, 0.875), token("OUT", 0.121, 0.875), token("OUT→IN", 0.186, 0.875),
+            token("特別事項・注意事項", 0.576, 0.880), token("担当者名", 0.721, 0.870),
+            token("201", 0.062, 0.845), token("OUT", 0.121, 0.845), token("OUT→IN", 0.186, 0.845),
+            token("３人", 0.576, 0.847), token("示例担当", 0.721, 0.848), token("检查空调", 0.820, 0.845),
+            token("202", 0.062, 0.829), token("IN", 0.250, 0.829),
+            token("203", 0.062, 0.812), token("S", 0.306, 0.812),
+            token("204", 0.062, 0.796), token("清掃不要", 0.250, 0.796)
+        ])
+        XCTAssertEqual(rooms.map(\.kind), [.turnover, .checkin, .stay, .skip])
+        XCTAssertEqual(rooms.map(\.guests), [3, nil, nil, nil])
+        XCTAssertEqual(rooms.map(\.employee), ["示例担当", "", "", ""])
+        XCTAssertTrue(rooms[0].notes.contains("检查空调"))
+    }
 }

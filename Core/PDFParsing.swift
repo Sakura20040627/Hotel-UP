@@ -20,7 +20,7 @@ enum PDFParsing {
         case room = "ROOM№", turnover = "OUT→IN", out = "OUT", skip = "清掃不要"
         case checkin = "IN", stay = "S", extra = "エクストラ", early = "12時IN", late = "12時OUT"
         case pickup = "案内回収", notes = "特別事項・注意事項", employee = "清掃担当者名"
-        case complete = "清掃完了", guests = "入住人数"
+        case complete = "清掃完了", guests = "入住人数", inspection = "检查备注"
 
         static func identify(_ text: String) -> Self? {
             let value = text.precomposedStringWithCompatibilityMapping.uppercased()
@@ -140,6 +140,7 @@ enum PDFParsing {
         -> (rooms: [Room], columns: [Column: CGFloat]) {
         let groups = lines(tokens)
         var columns = inherited
+        var hotelLayout = false
         var header: CGFloat = 1
         var best = 0
         for group in groups {
@@ -160,10 +161,33 @@ enum PDFParsing {
                 best = found.count
             }
         }
+        if best > 0, let room = columns[.room], let out = columns[.out], let turnover = columns[.turnover],
+           abs(room - 0.062) < 0.02, abs(out - 0.121) < 0.02, abs(turnover - 0.186) < 0.02 {
+            let heading = tokens.filter { abs($0.box.midY - header) < 0.028 }
+            let employee = heading.contains { (0.67...0.76).contains($0.box.midX) && $0.text.contains("担当者名") }
+            let notes = heading.contains { (0.48...0.66).contains($0.box.midX) && $0.text.contains("特別事項") }
+            if employee && notes {
+                hotelLayout = true
+                columns = [.room: 0.062, .out: 0.121, .turnover: 0.186, .checkin: 0.250,
+                           .stay: 0.306, .extra: 0.350, .early: 0.381, .late: 0.414,
+                           .pickup: 0.449, .notes: 0.576, .employee: 0.721, .inspection: 0.802]
+            }
+        }
         guard let roomX = columns[.room] else { return ([], columns) }
         let centers = columns.sorted { $0.value < $1.value }
         func column(_ x: CGFloat) -> Column? {
-            centers.min { abs($0.value - x) < abs($1.value - x) }?.key
+            if hotelLayout {
+                // Normalized grid boundaries, applied only after matching the printed headers.
+                let boundaries: [(CGFloat, Column)] = [
+                    (0.0926, .room), (0.1478, .out), (0.2230, .turnover), (0.2783, .checkin),
+                    (0.3335, .stay), (0.3648, .extra), (0.3977, .early), (0.4320, .late),
+                    (0.4663, .pickup), (0.6861, .notes), (0.7542, .employee), (0.8582, .inspection),
+                    (0.889, .complete)
+                ]
+                guard x >= 0.028 else { return nil }
+                return boundaries.first { x < $0.0 }?.1
+            }
+            return centers.min { abs($0.value - x) < abs($1.value - x) }?.key
         }
         let body = tokens.filter { $0.box.midY < header - 0.002 }
         let candidates = body.filter {
@@ -189,18 +213,26 @@ enum PDFParsing {
             }
             let kind: Kind = if marked(.turnover) { .turnover }
             else if marked(.out) { .checkout }
-            else if marked(.skip) { .skip }
+            else if marked(.skip) || (hotelLayout && contents(.checkin).filter { !$0.isWhitespace }.contains("清掃不要")) { .skip }
             else if marked(.extra) || marked(.pickup) { .special }
             else if marked(.stay) { .stay }
             else if marked(.checkin) { .checkin }
             else { .unknown }
             let roomNumber = anchor.text
-            let guestText = contents(.guests)
-            let guests = guestText.range(of: #"^\s*[1-9][0-9]?\s*(?:人|名)?\s*$"#, options: .regularExpression)
+            let noteText = contents(.notes).precomposedStringWithCompatibilityMapping
+            let guestText = contents(.guests).precomposedStringWithCompatibilityMapping
+            let guestPattern = #"[1-9][0-9]?\s*(?:人|名)"#
+            let explicit = guestText.range(of: #"^\s*[1-9][0-9]?\s*(?:人|名)?\s*$"#, options: .regularExpression)
                 .flatMap { _ in Int(guestText.filter(\.isNumber)) }
+            let noteCount = hotelLayout && guestText.isEmpty
+                ? noteText.range(of: #"^\s*"# + guestPattern + #"(?![0-9])"#, options: .regularExpression)
+                : nil
+            let guests = explicit ?? noteCount.flatMap { Int(noteText[$0].filter(\.isNumber)) }
+            let notes = [noteText, contents(.inspection)].filter { !$0.isEmpty }.joined(separator: "\n")
             let marks: [Column] = [.early, .late, .extra, .pickup, .complete]
             let values = marks.filter(marked).map { "\($0.rawValue) \(contents($0))" }
             let employee = contents(.employee)
+                .replacingOccurrences(of: #"(?<=[\p{Han}])\s+(?=[\p{Han}])"#, with: "", options: .regularExpression)
             let quality = ([anchor] + cells.values.flatMap { $0 }).map(\.confidence).min() ?? 0
             let fieldSources = Dictionary(uniqueKeysWithValues: cells.compactMap { key, values -> (String, Source)? in
                 guard let first = values.first else { return nil }
@@ -208,7 +240,7 @@ enum PDFParsing {
                 return (key.rawValue, Source(page: page, x: rect.minX, y: rect.minY, width: rect.width,
                                              height: rect.height, confidence: values.map(\.confidence).min() ?? 0))
             })
-            return Room(number: roomNumber, kind: kind, employee: employee, guests: guests, notes: contents(.notes),
+            return Room(number: roomNumber, kind: kind, employee: employee, guests: guests, notes: notes,
                         marks: values, source: Source(page: page, x: 0, y: bottom, width: 1, height: top - bottom, confidence: quality),
                         fieldSources: fieldSources,
                         needsReview: kind == .unknown || best == 0 || quality < 0.85 ||
@@ -220,6 +252,7 @@ enum PDFParsing {
 
     private static func findDate(_ tokens: [Token]) -> Date? {
         let text = lines(tokens).map { $0.map(\.text).joined(separator: " ") }.joined(separator: "\n")
+            .precomposedStringWithCompatibilityMapping
         guard let span = text.range(of: #"20\d\d\s*[-/.年]\s*\d{1,2}\s*[-/.月]\s*\d{1,2}"#, options: .regularExpression) else { return nil }
         let parts = text[span].split { !$0.isNumber }.compactMap { Int($0) }
         guard parts.count == 3, (1...12).contains(parts[1]), (1...31).contains(parts[2]) else { return nil }

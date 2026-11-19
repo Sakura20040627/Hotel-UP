@@ -144,7 +144,8 @@ struct Dashboard: View {
                     Text("任务 \(personal.count) · OUT→IN \(personal.filter { $0.kind == .turnover }.count) · 完成 \(done) · \(Int(rate * 100))%")
                         .font(.subheadline)
                 }
-                .padding(.vertical, 8)
+                .padding(12)
+                .modifier(SummarySurface())
                 Button("导入今日清扫 PDF", systemImage: "square.and.arrow.down") { showingFiles = true }
                     .disabled(blocked || busy || draft != nil)
                 if busy { ProgressView("正在本地识别 PDF") }
@@ -152,6 +153,11 @@ struct Dashboard: View {
             Section("我的房间") {
                 ForEach(personal) { room in
                     NavigationLink { roomDetail(room.id) } label: { card(room) }
+                        .swipeActions(edge: .leading) {
+                            if room.kind.cleanable && room.work.stage == .waiting {
+                                Button("开始", systemImage: "play.fill") { edit(room.id) { $0.work.start(at: .now) } }
+                            }
+                        }
                 }
                 .onMove { from, to in
                     var moved = personal
@@ -217,7 +223,7 @@ struct Dashboard: View {
                 List {
                     Section { card(room) }
                     Section("清扫") {
-                        if room.work.stage == .waiting || (room.work.stage == .active && room.work.runningSince == nil) {
+                        if room.kind.cleanable && (room.work.stage == .waiting || (room.work.stage == .active && room.work.runningSince == nil)) {
                             Button(room.work.started == nil ? "开始清扫" : "继续清扫") { edit(id) { $0.work.start(at: .now) } }
                         }
                         if room.work.runningSince != nil {
@@ -493,6 +499,8 @@ struct Dashboard: View {
             } catch {
                 if pending { rejected.insert(source) }
                 message = "无法读取或识别 PDF。请确认文件完整且未加密。"
+                busy = false
+                if pending { checkInbox() }
             }
         }
     }
@@ -554,5 +562,15 @@ struct Dashboard: View {
             }
             save(backup.ledger)
         } catch { message = "恢复失败，备份文件可能不完整。" }
+    }
+}
+
+private struct SummarySurface: ViewModifier {
+    func body(content: Content) -> some View {
+        if #available(iOS 26.0, *) {
+            content.glassEffect(.regular, in: .rect(cornerRadius: 22))
+        } else {
+            content.background(.thinMaterial, in: RoundedRectangle(cornerRadius: 22))
+        }
     }
 }

@@ -5,6 +5,7 @@ enum Kind: String, Codable, CaseIterable, Identifiable {
     case checkin = "IN", stay = "S", skip = "清掃不要", unknown = "待确认"
     var id: Self { self }
     var full: Bool { self == .turnover || self == .checkout }
+    var cleanable: Bool { full || self == .special }
     var priority: Int {
         switch self { case .turnover: 1; case .checkout: 2; case .special: 3; default: 4 }
     }

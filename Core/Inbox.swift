@@ -21,9 +21,7 @@ enum Inbox {
 
     @discardableResult static func enqueue(_ data: Data) throws -> URL {
         let destination = try folder().appendingPathComponent(digest(data) + ".pdf")
-        do {
-            try data.write(to: destination, options: [.atomic, .completeFileProtectionUntilFirstUserAuthentication])
-        } catch { throw error }
+        try data.write(to: destination, options: [.atomic, .completeFileProtectionUntilFirstUserAuthentication])
         return destination
     }
 }

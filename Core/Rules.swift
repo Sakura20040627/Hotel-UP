@@ -176,24 +176,30 @@ enum SupplyEngine {
 }
 
 enum Priority {
-    static func sorted(_ rooms: [Room]) -> [Room] {
-        rooms.sorted { lhs, rhs in
+    static func sorted(_ rooms: [Room], at time: Date = .now, calendar: Calendar = .current) -> [Room] {
+        let now = calendar.component(.hour, from: time) * 60 + calendar.component(.minute, from: time)
+        return rooms.sorted { lhs, rhs in
             if (lhs.work.stage == .done) != (rhs.work.stage == .done) { return rhs.work.stage == .done }
             if lhs.order != rhs.order { return (lhs.order ?? Int.max) < (rhs.order ?? Int.max) }
+            let releaseA = minutes(in: lhs, suffix: "OUT") ?? 0
+            let releaseB = minutes(in: rhs, suffix: "OUT") ?? 0
+            if (releaseA > now) != (releaseB > now) { return releaseA <= now }
             if lhs.kind.priority != rhs.kind.priority { return lhs.kind.priority < rhs.kind.priority }
-            let a = arrival(lhs), b = arrival(rhs)
-            if a != b { return a < b }
+            let deadlineA = minutes(in: lhs, suffix: "IN") ?? Int.max
+            let deadlineB = minutes(in: rhs, suffix: "IN") ?? Int.max
+            if deadlineA != deadlineB { return deadlineA < deadlineB }
+            if releaseA > now, releaseB > now, releaseA != releaseB { return releaseA < releaseB }
             return (Int(lhs.number) ?? Int.max) < (Int(rhs.number) ?? Int.max)
         }
     }
 
-    private static func arrival(_ room: Room) -> Int {
-        let text = (room.marks + [room.notes]).joined(separator: " ")
-        guard let match = text.range(of: #"\d{1,2}(?::\d{2}|時(?:\d{1,2}分)?)\s*IN"#, options: .regularExpression) else {
-            return Int.max
-        }
+    private static func minutes(in room: Room, suffix: String) -> Int? {
+        let text = (room.marks + [room.notes]).joined(separator: " ").precomposedStringWithCompatibilityMapping
+        let pattern = #"\d{1,2}(?::\d{2}|時(?:\d{1,2}分)?)\s*"# + suffix
+        guard let match = text.range(of: pattern, options: [.regularExpression, .caseInsensitive]) else { return nil }
         let parts = text[match].split { !$0.isNumber }.compactMap { Int($0) }
-        guard let hour = parts.first, hour < 24 else { return Int.max }
-        return hour * 60 + (parts.dropFirst().first ?? 0)
+        let minute = parts.dropFirst().first ?? 0
+        guard let hour = parts.first, hour < 24, minute < 60 else { return nil }
+        return hour * 60 + minute
     }
 }

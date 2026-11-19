@@ -60,7 +60,12 @@ final class RulesTests: XCTestCase {
                      Room(number: "201", kind: .checkout),
                      Room(number: "301", kind: .turnover, marks: ["12時IN"]),
                      Room(number: "205", kind: .turnover)]
-        XCTAssertEqual(Priority.sorted(rooms).map(\.number), ["301", "205", "201", "202"])
+        let local = Calendar.current.date(from: DateComponents(year: 2026, month: 11, day: 17, hour: 10))!
+        XCTAssertEqual(Priority.sorted(rooms, at: local).map(\.number), ["301", "205", "201", "202"])
+        XCTAssertEqual(Priority.sorted([
+            Room(number: "201", kind: .turnover, marks: ["12時OUT"]),
+            Room(number: "202", kind: .checkout)
+        ], at: local).map(\.number), ["202", "201"])
         XCTAssertTrue(SupplyEngine.requirement(for: Room(number: "201", kind: .stay, guests: 3),
                                                settings: settings).counts.isEmpty)
     }

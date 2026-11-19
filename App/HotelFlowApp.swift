@@ -62,7 +62,7 @@ struct Dashboard: View {
     @State private var loaded = false
     @State private var blocked = false
     @State private var showingFiles = false
-    @State private var restore = false
+    @State private var importingBackup = false
     @State private var export = false
     @State private var backup: BackupFile?
     @State private var restoreCandidate: Backup?
@@ -99,17 +99,17 @@ struct Dashboard: View {
         .alert("HotelFlow", isPresented: Binding(get: { message != nil }, set: { if !$0 { message = nil } })) {
             Button("好") { message = nil }
         } message: { Text(message ?? "") }
-        .fileImporter(isPresented: $showingFiles, allowedContentTypes: [.pdf]) { result in
-            do { importFile(try result.get(), pending: false) }
-            catch { message = "无法读取所选 PDF。" }
-        }
-        .fileImporter(isPresented: $restore, allowedContentTypes: [.json]) { result in
+        .fileImporter(isPresented: $showingFiles, allowedContentTypes: [importingBackup ? .json : .pdf]) { result in
             do {
                 let url = try result.get()
-                let access = url.startAccessingSecurityScopedResource()
-                defer { if access { url.stopAccessingSecurityScopedResource() } }
-                restoreCandidate = try JSONDecoder().decode(Backup.self, from: Data(contentsOf: url))
-            } catch { message = "无法读取备份。" }
+                if importingBackup {
+                    let access = url.startAccessingSecurityScopedResource()
+                    defer { if access { url.stopAccessingSecurityScopedResource() } }
+                    restoreCandidate = try JSONDecoder().decode(Backup.self, from: Data(contentsOf: url))
+                } else {
+                    importFile(url, pending: false)
+                }
+            } catch { message = importingBackup ? "无法读取备份。" : "无法读取所选 PDF。" }
         }
         .fileExporter(isPresented: $export, document: backup, contentType: .json, defaultFilename: "HotelFlow-Backup") { result in
             if case .failure = result { message = "无法导出备份。" }
@@ -146,7 +146,10 @@ struct Dashboard: View {
                 }
                 .padding(12)
                 .modifier(SummarySurface())
-                Button("导入今日清扫 PDF", systemImage: "square.and.arrow.down") { showingFiles = true }
+                Button("导入今日清扫 PDF", systemImage: "square.and.arrow.down") {
+                    importingBackup = false
+                    showingFiles = true
+                }
                     .disabled(blocked || busy || draft != nil)
                 if busy { ProgressView("正在本地识别 PDF") }
             }
@@ -223,7 +226,8 @@ struct Dashboard: View {
                 List {
                     Section { card(room) }
                     Section("清扫") {
-                        if room.kind.cleanable && (room.work.stage == .waiting || (room.work.stage == .active && room.work.runningSince == nil)) {
+                        if (room.kind.cleanable && room.work.stage == .waiting) ||
+                            (room.work.stage == .active && room.work.runningSince == nil) {
                             Button(room.work.started == nil ? "开始清扫" : "继续清扫") { edit(id) { $0.work.start(at: .now) } }
                         }
                         if room.work.runningSince != nil {
@@ -244,7 +248,7 @@ struct Dashboard: View {
                         ForEach(room.work.order, id: \.self) { index in
                             Toggle(Self.steps[index], isOn: Binding(get: { room.work.checked.contains(index) }, set: { checked in
                                 edit(id) { if checked { $0.work.checked.insert(index) } else { $0.work.checked.remove(index) } }
-                            })).disabled(room.work.stage == .done)
+                            })).disabled(room.work.stage == .done || (!room.kind.cleanable && room.work.started == nil))
                         }.onMove { from, to in edit(id, audit: "调整清扫步骤顺序") { $0.work.order.move(fromOffsets: from, toOffset: to) } }
                     }
                     Section("房间信息") {
@@ -366,7 +370,11 @@ struct Dashboard: View {
                         else if let value = Int(input), (1...99).contains(value) { settingsBinding(\.specialCapacity).wrappedValue = value }
                     })).keyboardType(.numberPad)
                 Button("备份全部本地记录和 PDF") { settings = false; createBackup() }
-                Button("从备份恢复") { settings = false; restore = true }
+                Button("从备份恢复") {
+                    settings = false
+                    importingBackup = true
+                    showingFiles = true
+                }
             }.navigationTitle("设置").toolbar { Button("完成") { settings = false } }
         }
     }

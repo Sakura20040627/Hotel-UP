@@ -6,12 +6,13 @@ import UniformTypeIdentifiers
 @main struct HotelFlowApp: App {
     @State private var container: ModelContainer?
     @State private var failed = false
+    @State private var externalPDFs: [URL] = []
 
     var body: some Scene {
         WindowGroup {
             Group {
                 if let container {
-                    Dashboard().modelContainer(container)
+                    Dashboard(externalPDFs: $externalPDFs).modelContainer(container)
                 } else if failed {
                     ContentUnavailableView("无法打开本地数据库", systemImage: "externaldrive.badge.exclamationmark")
                 } else {
@@ -20,6 +21,9 @@ import UniformTypeIdentifiers
                         catch { failed = true }
                     }
                 }
+            }
+            .onOpenURL { url in
+                if url.isFileURL { externalPDFs.append(url) }
             }
         }
     }
@@ -55,6 +59,7 @@ private struct BackupFile: FileDocument {
 }
 
 struct Dashboard: View {
+    @Binding var externalPDFs: [URL]
     @Environment(\.modelContext) private var context
     @Environment(\.scenePhase) private var phase
     @State private var ledger = Ledger()
@@ -95,11 +100,8 @@ struct Dashboard: View {
         .task { load(); checkInbox() }
         .onChange(of: phase) { _, value in if value == .active { checkInbox() } }
         .onChange(of: draft == nil) { _, clear in if clear { checkInbox() } }
-        .onOpenURL { url in
-            load()
-            selectedTab = 0
-            importFile(url, pending: false)
-        }
+        .onChange(of: externalPDFs) { _, _ in checkInbox() }
+        .onChange(of: busy) { _, isBusy in if !isBusy { checkInbox() } }
         .alert("HotelFlow", isPresented: Binding(get: { message != nil }, set: { if !$0 { message = nil } })) {
             Button("好") { message = nil; checkInbox() }
         } message: { Text(message ?? "") }
@@ -501,8 +503,14 @@ struct Dashboard: View {
 
     private func checkInbox() {
         guard loaded, !blocked, !busy, draft == nil, !settings, !showingImporter,
-              !export, preview == nil, message == nil,
-              let folder = try? Inbox.folder(),
+              !export, preview == nil, message == nil else { return }
+        if !externalPDFs.isEmpty {
+            let url = externalPDFs.removeFirst()
+            selectedTab = 0
+            importFile(url, pending: false)
+            return
+        }
+        guard let folder = try? Inbox.folder(),
               let files = try? FileManager.default.contentsOfDirectory(at: folder, includingPropertiesForKeys: [.creationDateKey]) else { return }
         let pending = files.filter { $0.pathExtension == "pdf" && !rejected.contains($0) }.sorted {
             let left = (try? $0.resourceValues(forKeys: [.creationDateKey]).creationDate) ?? .distantPast

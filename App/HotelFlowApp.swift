@@ -57,7 +57,6 @@ private struct BackupFile: FileDocument {
 struct Dashboard: View {
     @Environment(\.modelContext) private var context
     @Environment(\.scenePhase) private var phase
-    @Query private var records: [LedgerRecord]
     @State private var ledger = Ledger()
     @State private var loaded = false
     @State private var blocked = false
@@ -395,12 +394,14 @@ struct Dashboard: View {
         guard !loaded else { return }
         loaded = true
         do {
-            if let record = records.first { ledger = try JSONDecoder().decode(Ledger.self, from: record.data) }
+            if let record = try context.fetch(FetchDescriptor<LedgerRecord>()).first {
+                ledger = try JSONDecoder().decode(Ledger.self, from: record.data)
+            }
         } catch { blocked = true; message = "本地记录无法读取。现有记录已保留。" }
     }
 
-    @discardableResult private func save(_ updated: Ledger) -> Bool {
-        guard !blocked else { return false }
+    @discardableResult private func save(_ updated: Ledger, restoring: Bool = false) -> Bool {
+        guard !blocked || restoring else { return false }
         do {
             let data = try JSONEncoder().encode(updated)
             let existing = try context.fetch(FetchDescriptor<LedgerRecord>()).first
@@ -408,6 +409,7 @@ struct Dashboard: View {
             else { context.insert(LedgerRecord(data: data)) }
             try context.save()
             ledger = updated
+            blocked = false
             return true
         } catch {
             context.rollback()
@@ -573,7 +575,7 @@ struct Dashboard: View {
                 }
                 try data.write(to: pdfURL(revision.id), options: [.atomic, .completeFileProtectionUntilFirstUserAuthentication])
             }
-            save(backup.ledger)
+            if save(backup.ledger, restoring: true) { checkInbox() }
         } catch { message = "恢复失败，备份文件可能不完整。" }
     }
 }

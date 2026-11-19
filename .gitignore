@@ -1,0 +1,6 @@
+HotelFlow.xcodeproj/
+build/
+*.xcresult
+*.ipa
+*.pdf
+.DS_Store

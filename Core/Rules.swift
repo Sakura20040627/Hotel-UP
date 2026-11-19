@@ -156,13 +156,23 @@ enum SupplyEngine {
         let pillows = room.type == .special ? doubles * 2 : (capacity ?? 0)
         let warning: String? = if guests == nil && room.kind.full { "入住人数待确认" }
         else if let guests, let capacity, guests > capacity { "超过已配置容量" }
+        else if room.kind == .special && room.quantities.isEmpty { "按备注确认备品" }
         else { nil }
+
+        let notes = room.notes.precomposedStringWithCompatibilityMapping.lowercased()
+        let skipLinen = ["不换床品", "无需换床品", "リネン交換なし", "リネン交換不要", "シーツ交換なし"]
+            .contains { notes.contains($0) }
+        let skipGuestSupplies = ["不补备品", "備品補充なし", "備品補充不要"]
+            .contains { notes.contains($0) }
 
         var counts: [Supply: Int] = [:]
         if room.kind.full {
-            counts = [.doubleCover: doubles, .doubleSheet: doubles, .singleCover: singles,
-                      .singleSheet: singles, .pillow: pillows, .mat: 1]
-            if let guests {
+            counts[.mat] = 1
+            if !skipLinen {
+                counts.merge([.doubleCover: doubles, .doubleSheet: doubles, .singleCover: singles,
+                              .singleSheet: singles, .pillow: pillows]) { _, updated in updated }
+            }
+            if let guests, !skipGuestSupplies {
                 counts[.towel] = guests
                 counts[.handTowel] = guests
                 counts[.toothbrush] = guests

@@ -70,6 +70,18 @@ final class RulesTests: XCTestCase {
                                                settings: settings).counts.isEmpty)
     }
 
+    func testExplicitNoLinenInstructionAndManualSpecialSupplies() {
+        let settings = Settings()
+        let full = Room(number: "201", kind: .turnover, notes: "リネン交換なし")
+        let standard = SupplyEngine.requirement(for: full, settings: settings)
+        XCTAssertNil(standard.counts[.pillow])
+        XCTAssertEqual(standard.counts[.towel], 3)
+        var special = Room(number: "201", kind: .special, notes: "タオル回収")
+        XCTAssertNotNil(SupplyEngine.requirement(for: special, settings: settings).warning)
+        special.quantities[.towel] = 2
+        XCTAssertEqual(SupplyEngine.requirement(for: special, settings: settings).counts, [.towel: 2])
+    }
+
     func testTimerSurvivesRoundTripAndExcludesPause() throws {
         let start = Date(timeIntervalSince1970: 100)
         var work = Work()

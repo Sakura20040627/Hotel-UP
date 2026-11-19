@@ -541,6 +541,7 @@ struct Dashboard: View {
             }
         } cancel: {
             if let pending = value.pending { rejected.insert(pending) }
+            try? FileManager.default.removeItem(at: value.url)
             draft = nil
         }
     }

@@ -14,7 +14,7 @@ HotelFlow 是使用 SwiftUI、SwiftData、PDFKit 和 Vision 的原生 iPhone 清
 
 ## 云端构建
 
-在 Actions 中运行 **HotelFlow iOS**。Push 和 Pull Request 也触发构建。macOS Runner 会选择装有 iOS 26 SDK 的 Xcode，通过 XcodeGen 生成工程，运行 XCTest，再编译 iPhone Release 主程序及分享扩展。
+在 Actions 中运行 **HotelFlow iOS**。Push 和 Pull Request 也触发构建。macOS Runner 会选择装有 iOS 26 SDK 的 Xcode，通过 XcodeGen 生成工程，运行 XCTest，再编译 iPhone Release 主程序及分享扩展。手动触发时可选 macOS 15 Runner，以便在默认 Runner 排队时使用另一套环境。
 
 **HotelFlow-unsigned-IPA** 包含设备端 IPA，需要签名后才能安装。**HotelFlow-build-and-test-logs** 包含 XCTest 结果和日志。
 

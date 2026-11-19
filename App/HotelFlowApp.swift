@@ -558,7 +558,9 @@ struct Dashboard: View {
     }
 
     private func reviewSheet(_ value: Draft) -> some View {
-        Review(draft: value, settings: ledger.settings, days: ledger.days) { confirmed in
+        Review(draft: value, settings: ledger.settings, days: ledger.days, selectEmployee: { name in
+            settingsBinding(\.employee).wrappedValue = name
+        }) { confirmed in
             var next = ledger
             let date = Calendar.current.startOfDay(for: confirmed.date)
             let rooms = confirmed.rooms.map { room in

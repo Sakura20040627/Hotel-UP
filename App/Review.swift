@@ -7,15 +7,20 @@ struct Review: View {
     let days: [Day]
     let confirm: (Draft) -> Void
     let cancel: () -> Void
+    let selectEmployee: (String) -> Void
+    @State private var selectedEmployee: String
     @State private var checked = false
     @State private var preview: PDFPreview?
     let original: [Room]
 
-    init(draft: Draft, settings: Settings, days: [Day], confirm: @escaping (Draft) -> Void, cancel: @escaping () -> Void) {
+    init(draft: Draft, settings: Settings, days: [Day], selectEmployee: @escaping (String) -> Void,
+         confirm: @escaping (Draft) -> Void, cancel: @escaping () -> Void) {
         _draft = State(initialValue: draft)
         original = draft.rooms
         self.settings = settings
         self.days = days
+        _selectedEmployee = State(initialValue: settings.employee)
+        self.selectEmployee = selectEmployee
         self.confirm = confirm
         self.cancel = cancel
     }
@@ -57,8 +62,19 @@ struct Review: View {
                         Button("手动添加房间", systemImage: "plus") { draft.rooms.append(Room(number: "")) }
                     }
                     if draft.unresolved > 0 { Text("\(draft.unresolved) 页未识别，请查看原始 PDF 并补齐。").foregroundStyle(.orange) }
-                    if !settings.employee.isEmpty {
-                        Text("匹配 \(settings.employee) · \(draft.rooms.filter(settings.owns).count) 间")
+                    let employees = Set(draft.rooms.map { Settings.normalized($0.employee) }).subtracting([""]).sorted()
+                    if !employees.isEmpty {
+                        Menu {
+                            ForEach(employees, id: \.self) { name in
+                                Button(name) { selectedEmployee = name }
+                            }
+                        } label: {
+                            LabeledContent("我的担当者", value: selectedEmployee.isEmpty ? "请选择" : selectedEmployee)
+                        }
+                    }
+                    if !selectedEmployee.isEmpty {
+                        let matching = draft.rooms.filter { Settings.normalized($0.employee) == Settings.normalized(selectedEmployee) }.count
+                        Text("匹配 \(selectedEmployee) · \(matching) 间")
                     }
                     Button("查看整份 PDF") { preview = PDFPreview(url: draft.url) }
                 }
@@ -111,7 +127,10 @@ struct Review: View {
                     Button("添加遗漏房间", systemImage: "plus") { draft.rooms.append(Room(number: "")) }
                 }
                 Toggle("已核对房号、任务、担当者和修订差异", isOn: $checked)
-                Button("确认导入") { confirm(reviewedDraft()) }.disabled(!valid)
+                Button("确认导入") {
+                    if selectedEmployee != settings.employee { selectEmployee(selectedEmployee) }
+                    confirm(reviewedDraft())
+                }.disabled(!valid)
             }
             .navigationTitle("校对清扫表")
             .toolbar { Button("取消", action: cancel) }

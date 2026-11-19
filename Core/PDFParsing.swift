@@ -224,10 +224,19 @@ enum PDFParsing {
             let guestPattern = #"[1-9][0-9]?\s*(?:人|名)"#
             let explicit = guestText.range(of: #"^\s*[1-9][0-9]?\s*(?:人|名)?\s*$"#, options: .regularExpression)
                 .flatMap { _ in Int(guestText.filter(\.isNumber)) }
-            let noteCount = hotelLayout && guestText.isEmpty
-                ? noteText.range(of: #"^\s*"# + guestPattern + #"(?![0-9])"#, options: .regularExpression)
+            let countsInNotes = (cells[.notes] ?? []).filter {
+                (0.54...0.62).contains($0.box.midX) &&
+                abs($0.box.midY - anchor.box.midY) <= max(0.004, anchor.box.height * 0.65)
+            }
+            let inferredGuestCounts = Set(countsInNotes.compactMap { token -> Int? in
+                let text = token.text.precomposedStringWithCompatibilityMapping
+                guard text.range(of: #"^\s*"# + guestPattern + #"\s*$"#, options: .regularExpression) != nil else { return nil }
+                return Int(text.filter(\.isNumber))
+            })
+            let noteCount = hotelLayout && guestText.isEmpty && inferredGuestCounts.count == 1
+                ? inferredGuestCounts.first
                 : nil
-            let guests = explicit ?? noteCount.flatMap { Int(noteText[$0].filter(\.isNumber)) }
+            let guests = explicit ?? noteCount
             let notes = [noteText, contents(.inspection)].filter { !$0.isEmpty }.joined(separator: "\n")
             let marks: [Column] = [.early, .late, .extra, .pickup, .complete]
             let values = marks.filter(marked).map { "\($0.rawValue) \(contents($0))" }
@@ -244,7 +253,8 @@ enum PDFParsing {
                         marks: values, source: Source(page: page, x: 0, y: bottom, width: 1, height: top - bottom, confidence: quality),
                         fieldSources: fieldSources,
                         needsReview: kind == .unknown || best == 0 || quality < 0.85 ||
-                            (!guestText.isEmpty && guests == nil) || columns[.employee] == nil ||
+                            (!guestText.isEmpty && guests == nil) || (hotelLayout && inferredGuestCounts.count > 1) ||
+                            columns[.employee] == nil ||
                             (roomNumber == "1103" && kind.full && guests == nil))
         }
         return (rooms, columns)

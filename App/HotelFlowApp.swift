@@ -60,8 +60,7 @@ struct Dashboard: View {
     @State private var ledger = Ledger()
     @State private var loaded = false
     @State private var blocked = false
-    @State private var showingPDFPicker = false
-    @State private var selectedPDF: URL?
+    @State private var showingImporter = false
     @State private var importingBackup = false
     @State private var export = false
     @State private var backup: BackupFile?
@@ -98,20 +97,21 @@ struct Dashboard: View {
         .alert("HotelFlow", isPresented: Binding(get: { message != nil }, set: { if !$0 { message = nil } })) {
             Button("好") { message = nil; checkInbox() }
         } message: { Text(message ?? "") }
-        .fileImporter(isPresented: $importingBackup, allowedContentTypes: [.json]) { result in
-            do {
-                let url = try result.get()
-                let access = url.startAccessingSecurityScopedResource()
-                defer { if access { url.stopAccessingSecurityScopedResource() } }
-                restoreCandidate = try JSONDecoder().decode(Backup.self, from: Data(contentsOf: url))
-            } catch { message = "无法读取备份。" }
-        }
-        .sheet(isPresented: $showingPDFPicker, onDismiss: finishPDFSelection) {
-            PDFDocumentPicker { url in
-                selectedPDF = url
-                showingPDFPicker = false
+        .fileImporter(isPresented: $showingImporter, allowedContentTypes: importingBackup ? [.json] : [.pdf, .data]) { result in
+            switch result {
+            case .success(let url):
+                if importingBackup {
+                    do {
+                        let access = url.startAccessingSecurityScopedResource()
+                        defer { if access { url.stopAccessingSecurityScopedResource() } }
+                        restoreCandidate = try JSONDecoder().decode(Backup.self, from: Data(contentsOf: url))
+                    } catch { message = "无法读取备份。" }
+                } else {
+                    importFile(url, pending: false)
+                }
+            case .failure:
+                message = importingBackup ? "无法读取备份。" : "系统未能打开该文件。请确认 PDF 已下载后重试。"
             }
-            .ignoresSafeArea()
         }
         .fileExporter(isPresented: $export, document: backup, contentType: .json, defaultFilename: "HotelFlow-Backup") { result in
             if case .failure = result { message = "无法导出备份。" }
@@ -149,8 +149,8 @@ struct Dashboard: View {
                 .padding(12)
                 .modifier(SummarySurface())
                 Button("导入今日清扫 PDF", systemImage: "square.and.arrow.down") {
-                    selectedPDF = nil
-                    showingPDFPicker = true
+                    importingBackup = false
+                    showingImporter = true
                 }
                     .disabled(blocked || busy || draft != nil)
                 if busy { ProgressView("正在本地识别 PDF") }
@@ -377,6 +377,7 @@ struct Dashboard: View {
                 Button("从备份恢复") {
                     settings = false
                     importingBackup = true
+                    showingImporter = true
                 }
             }.navigationTitle("设置").toolbar { Button("完成") { settings = false } }
         }
@@ -475,8 +476,8 @@ struct Dashboard: View {
     }
 
     private func checkInbox() {
-        guard loaded, !blocked, !busy, draft == nil, !settings, !showingPDFPicker,
-              selectedPDF == nil, !importingBackup, !export, preview == nil, message == nil,
+        guard loaded, !blocked, !busy, draft == nil, !settings, !showingImporter,
+              !export, preview == nil, message == nil,
               let folder = try? Inbox.folder(),
               let files = try? FileManager.default.contentsOfDirectory(at: folder, includingPropertiesForKeys: [.creationDateKey]) else { return }
         let pending = files.filter { $0.pathExtension == "pdf" && !rejected.contains($0) }.sorted {
@@ -487,17 +488,11 @@ struct Dashboard: View {
         if let next = pending.first { importFile(next, pending: true) }
     }
 
-    private func finishPDFSelection() {
-        if let url = selectedPDF {
-            selectedPDF = nil
-            importFile(url, pending: false)
-        } else {
-            checkInbox()
-        }
-    }
-
     private func importFile(_ source: URL, pending: Bool) {
-        guard !busy, !blocked else { return }
+        guard !busy, !blocked, draft == nil else {
+            if !pending { message = "当前无法开始另一次导入。请完成当前校对或等待处理结束后重试。" }
+            return
+        }
         busy = true
         Task {
             defer { busy = false }

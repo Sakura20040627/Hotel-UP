@@ -1,8 +1,11 @@
 import UIKit
 import UniformTypeIdentifiers
 
-final class ShareViewController: UIViewController {
+final class ShareViewController: UIViewController, UIDocumentPickerDelegate {
     private let status = UILabel()
+    private let saveToFiles = UIButton(type: .system)
+    private var exportFolder: URL?
+    private var exportFiles: [URL] = []
     private let done = UIButton(type: .system)
 
     override func viewDidLoad() {
@@ -14,7 +17,10 @@ final class ShareViewController: UIViewController {
         done.setTitle("完成", for: .normal)
         done.isEnabled = false
         done.addTarget(self, action: #selector(close), for: .touchUpInside)
-        let stack = UIStackView(arrangedSubviews: [status, done])
+        saveToFiles.setTitle("存到「文件」", for: .normal)
+        saveToFiles.isHidden = true
+        saveToFiles.addTarget(self, action: #selector(exportPDFs), for: .touchUpInside)
+        let stack = UIStackView(arrangedSubviews: [status, saveToFiles, done])
         stack.axis = .vertical
         stack.spacing = 20
         stack.translatesAutoresizingMaskIntoConstraints = false
@@ -32,17 +38,21 @@ final class ShareViewController: UIViewController {
                 $0.registeredTypeIdentifiers.contains(UTType.data.identifier)
             }
         Task {
-            guard (try? Inbox.folder()) != nil else {
-                status.text = "分享扩展无法访问共享容器。请先在 LINE 中将 PDF 存到「文件」，再从 HotelFlow 导入。"
-                done.isEnabled = true
-                return
-            }
             var received = 0
             for provider in providers {
-                if (try? await Self.receive(provider)) != nil { received += 1 }
+                guard let data = try? await Self.receive(provider) else { continue }
+                do {
+                    try Inbox.enqueue(data)
+                    received += 1
+                } catch {
+                    try? prepareExport(data)
+                }
             }
-            if received == 0 {
-                status.text = "未收到本地 PDF。请在 LINE 中打开并下载 PDF，再使用系统分享，或先存储到「文件」。"
+            if !exportFiles.isEmpty {
+                status.text = "有 \(exportFiles.count) 份 PDF 需要存到「文件」，然后在 HotelFlow 里导入。"
+                saveToFiles.isHidden = false
+            } else if received == 0 {
+                status.text = "无法读取或保存 PDF。请在 LINE 中打开并下载文件，再使用系统分享。"
             } else if received < providers.count {
                 status.text = "已接收 \(received) 份 PDF，部分文件失败。打开 HotelFlow 查看。"
             } else {
@@ -52,30 +62,43 @@ final class ShareViewController: UIViewController {
         }
     }
 
-    private static func receive(_ provider: NSItemProvider) async throws {
+    private static func receive(_ provider: NSItemProvider) async throws -> Data {
         if provider.hasItemConformingToTypeIdentifier(UTType.pdf.identifier) {
-            if let data = try? await readFile(provider, type: .pdf) {
-                try Inbox.enqueue(data)
-                return
-            }
-            if let data = try? await readData(provider, type: .pdf) {
-                try Inbox.enqueue(data)
-                return
-            }
+            if let data = try? await readFile(provider, type: .pdf) { return data }
+            if let data = try? await readData(provider, type: .pdf) { return data }
         }
         if provider.hasItemConformingToTypeIdentifier(UTType.fileURL.identifier),
-           let data = try? await readData(provider, type: .fileURL) {
-            try Inbox.enqueue(data)
-            return
-        }
+           let data = try? await readData(provider, type: .fileURL) { return data }
         if provider.registeredTypeIdentifiers.contains(UTType.data.identifier) {
-            let data: Data
-            if let file = try? await readFile(provider, type: .data) { data = file }
-            else { data = try await readData(provider, type: .data) }
-            try Inbox.enqueue(data)
-            return
+            if let data = try? await readFile(provider, type: .data) { return data }
+            return try await readData(provider, type: .data)
         }
         throw PDFInput.Failure.invalid
+    }
+
+    private func prepareExport(_ data: Data) throws {
+        let folder: URL
+        if let exportFolder {
+            folder = exportFolder
+        } else {
+            folder = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
+            try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+            exportFolder = folder
+        }
+        let file = folder.appendingPathComponent("HotelFlow-\(UUID().uuidString.prefix(8)).pdf")
+        try data.write(to: file, options: [.atomic, .completeFileProtectionUntilFirstUserAuthentication])
+        exportFiles.append(file)
+    }
+
+    @objc private func exportPDFs() {
+        let picker = UIDocumentPickerViewController(forExporting: exportFiles, asCopy: true)
+        picker.delegate = self
+        present(picker, animated: true)
+    }
+
+    func documentPicker(_ controller: UIDocumentPickerViewController, didPickDocumentsAt urls: [URL]) {
+        status.text = "已存到「文件」。请打开 HotelFlow，点「导入今日清扫 PDF」。"
+        saveToFiles.isHidden = true
     }
 
     private static func readFile(_ provider: NSItemProvider, type: UTType) async throws -> Data {
@@ -114,6 +137,7 @@ final class ShareViewController: UIViewController {
     }
 
     @objc private func close() {
+        if let exportFolder { try? FileManager.default.removeItem(at: exportFolder) }
         extensionContext?.completeRequest(returningItems: nil)
     }
 }

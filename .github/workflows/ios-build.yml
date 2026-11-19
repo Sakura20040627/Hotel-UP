@@ -5,6 +5,10 @@ on:
   pull_request:
   workflow_dispatch:
     inputs:
+      package_only:
+        description: Skip simulator tests and package the device IPA
+        type: boolean
+        default: false
       runner:
         description: macOS hosted runner
         type: choice
@@ -46,6 +50,7 @@ jobs:
           xcodegen generate
           xcodebuild -list -project HotelFlow.xcodeproj
       - name: Build app and extension for simulator and run XCTest
+        if: github.event_name != 'workflow_dispatch' || !inputs.package_only
         shell: bash
         run: |
           set -euo pipefail

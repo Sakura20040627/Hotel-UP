@@ -154,33 +154,23 @@ struct Dashboard: View {
 
     private var todayView: some View {
         List {
-            Section {
-                VStack(alignment: .leading, spacing: 10) {
-                    Text(ledger.settings.hotel.isEmpty ? "HotelFlow" : ledger.settings.hotel).font(.title2.bold())
-                    Text(today, format: .dateTime.month().day().weekday())
-                    Text(ledger.settings.employee.isEmpty ? "请在设置中填写担当者" : ledger.settings.employee)
-                    let done = personal.filter { $0.work.stage == .done }.count
-                    let rate = personal.isEmpty ? 0.0 : Double(done) / Double(personal.count)
-                    ProgressView(value: rate)
-                    Text("任务 \(personal.count) · OUT→IN \(personal.filter { $0.kind == .turnover }.count) · 完成 \(done) · \(Int(rate * 100))%")
-                        .font(.subheadline)
-                }
-                .padding(12)
-                .modifier(SummarySurface())
-                Button("导入今日清扫 PDF", systemImage: "square.and.arrow.down") {
+            TodayHeader(
+                date: today,
+                hotel: ledger.settings.hotel,
+                employee: ledger.settings.employee,
+                total: personal.count,
+                priority: personal.filter { $0.kind == .turnover }.count,
+                completed: personal.filter { $0.work.stage == .done }.count,
+                processing: busy,
+                importStatus: importStatus,
+                importDisabled: blocked || busy || draft != nil,
+                importPDF: {
                     importingBackup = false
                     showingImporter = true
-                }
-                    .disabled(blocked || busy || draft != nil)
-                if let importStatus {
-                    if busy { ProgressView(importStatus) }
-                    else {
-                        Text(importStatus).font(.subheadline)
-                            .foregroundStyle(.secondary)
-                            .textSelection(.enabled)
-                    }
-                }
-            }
+                },
+                openSettings: { settings = true }
+            )
+            .listRowSeparator(.hidden)
             Section("我的房间") {
                 ForEach(personal) { room in
                     NavigationLink { roomDetail(room.id) } label: { card(room) }
@@ -201,26 +191,36 @@ struct Dashboard: View {
                 }
                 if personal.isEmpty { Text("暂无个人任务").foregroundStyle(.secondary) }
             }
-            Section("未分配") {
-                ForEach(todayRooms.filter { Settings.normalized($0.employee).isEmpty && !$0.removed && !$0.superseded }) { room in
-                    NavigationLink { roomDetail(room.id) } label: { card(room) }
+            let unassigned = todayRooms.filter { Settings.normalized($0.employee).isEmpty && !$0.removed && !$0.superseded }
+            if !unassigned.isEmpty {
+                Section("未分配") {
+                    ForEach(unassigned) { room in
+                        NavigationLink { roomDetail(room.id) } label: { card(room) }
+                    }
                 }
             }
-            Section("其他担当者") {
-                ForEach(todayRooms.filter { !Settings.normalized($0.employee).isEmpty && !ledger.settings.owns($0) && !$0.removed && !$0.superseded }) { room in
-                    NavigationLink { roomDetail(room.id) } label: { card(room) }
+            let others = todayRooms.filter { !Settings.normalized($0.employee).isEmpty && !ledger.settings.owns($0) && !$0.removed && !$0.superseded }
+            if !others.isEmpty {
+                Section("其他担当者") {
+                    ForEach(others) { room in
+                        NavigationLink { roomDetail(room.id) } label: { card(room) }
+                    }
                 }
             }
-            Section("已移除") {
-                ForEach(todayRooms.filter { $0.removed && !$0.superseded }) { room in
-                    Button("恢复 \(room.number)") { edit(room.id, audit: "恢复个人任务") { $0.removed = false } }
+            let removed = todayRooms.filter { $0.removed && !$0.superseded }
+            if !removed.isEmpty {
+                Section("已移除") {
+                    ForEach(removed) { room in
+                        Button("恢复 \(room.number)") { edit(room.id, audit: "恢复个人任务") { $0.removed = false } }
+                    }
                 }
             }
         }
-        .navigationTitle("今日")
+        .listStyle(.plain)
+        .navigationBarTitleDisplayMode(.inline)
         .toolbar {
             ToolbarItem(placement: .topBarTrailing) { Button("设置", systemImage: "gearshape") { settings = true } }
-            ToolbarItem(placement: .topBarLeading) { EditButton() }
+            ToolbarItem(placement: .topBarLeading) { if personal.count > 1 { EditButton() } }
         }
     }
 
@@ -621,15 +621,5 @@ struct Dashboard: View {
             }
             if save(backup.ledger, restoring: true) { checkInbox() }
         } catch { message = "恢复失败，备份文件可能不完整。" }
-    }
-}
-
-private struct SummarySurface: ViewModifier {
-    func body(content: Content) -> some View {
-        if #available(iOS 26.0, *) {
-            content.glassEffect(.regular, in: .rect(cornerRadius: 22))
-        } else {
-            content.background(.thinMaterial, in: RoundedRectangle(cornerRadius: 22))
-        }
     }
 }

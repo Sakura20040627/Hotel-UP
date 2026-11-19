@@ -1,5 +1,6 @@
 import XCTest
 import UIKit
+import SwiftData
 @testable import HotelFlow
 
 final class RulesTests: XCTestCase {
@@ -76,6 +77,28 @@ final class RulesTests: XCTestCase {
         restored.inspect(at: start.addingTimeInterval(70))
         restored.finish(at: start.addingTimeInterval(85))
         XCTAssertEqual(restored.elapsed(at: start.addingTimeInterval(100)), 35)
+    }
+
+    @MainActor func testSwiftDataRestoresRunningSession() throws {
+        let path = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        try FileManager.default.createDirectory(at: path, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: path) }
+        let url = path.appendingPathComponent("test.store")
+        let start = Date(timeIntervalSince1970: 1_000)
+        do {
+            let container = try ModelContainer(for: LedgerRecord.self, configurations: ModelConfiguration(url: url))
+            var room = Room(number: "201", kind: .checkout)
+            room.work.start(at: start)
+            let value = Ledger(days: [Day(date: start, rooms: [room], revisions: [])])
+            container.mainContext.insert(LedgerRecord(data: try JSONEncoder().encode(value)))
+            try container.mainContext.save()
+        }
+        let container = try ModelContainer(for: LedgerRecord.self, configurations: ModelConfiguration(url: url))
+        let record = try XCTUnwrap(container.mainContext.fetch(FetchDescriptor<LedgerRecord>()).first)
+        let restored = try JSONDecoder().decode(Ledger.self, from: record.data)
+        let room = try XCTUnwrap(restored.days.first?.rooms.first)
+        XCTAssertEqual(room.work.stage, .active)
+        XCTAssertEqual(room.work.elapsed(at: start.addingTimeInterval(90)), 90)
     }
 
     func testCoordinateLayoutKeepsGuestsOnTheirRow() {

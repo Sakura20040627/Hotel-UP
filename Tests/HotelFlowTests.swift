@@ -158,4 +158,23 @@ final class RulesTests: XCTestCase {
         XCTAssertEqual(parsed.rooms.first?.kind, .checkout)
         XCTAssertEqual(parsed.rooms.first?.source?.page, 0)
     }
+
+    @MainActor func testPDFInputReadsLocalCopyWithoutTrustingExtension() throws {
+        let url = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString).appendingPathExtension("bin")
+        defer { try? FileManager.default.removeItem(at: url) }
+        let pdf = UIGraphicsPDFRenderer(bounds: CGRect(x: 0, y: 0, width: 200, height: 280)).pdfData {
+            $0.beginPage()
+        }
+        try pdf.write(to: url)
+        XCTAssertEqual(try PDFInput.read(url), pdf)
+        let parsed = try PDFParsing.parse(PDFInput.read(url))
+        XCTAssertTrue(parsed.rooms.isEmpty)
+        XCTAssertEqual(parsed.unresolved, 1)
+    }
+
+    func testPDFInputRejectsNonPDFDataAndRemoteURLs() {
+        XCTAssertThrowsError(try PDFInput.validate(Data("<html>Not a PDF</html>".utf8)))
+        let remote = URL(string: "https://example.com/example.pdf")!
+        XCTAssertThrowsError(try PDFInput.read(remote))
+    }
 }

@@ -34,9 +34,10 @@ enum PDFParsing {
     }
 
     static func parse(_ data: Data) throws -> Parsed {
-        guard let document = PDFDocument(data: data), !document.isLocked, document.pageCount > 0 else {
-            throw CocoaError(.fileReadCorruptFile)
-        }
+        try PDFInput.validate(data)
+        guard let document = PDFDocument(data: data) else { throw PDFInput.Failure.invalid }
+        guard !document.isLocked else { throw PDFInput.Failure.locked }
+        guard document.pageCount > 0 else { throw PDFInput.Failure.invalid }
         var result = Parsed(rooms: [], unresolved: 0)
         var inherited: [Column: CGFloat] = [:]
         for index in 0..<document.pageCount {
@@ -147,7 +148,8 @@ enum PDFParsing {
                 if let column = Column.identify(token.text) { found[column] = token.box.midX }
                 if index + 1 < group.count {
                     let next = group[index + 1]
-                    if let column = Column.identify(token.text + next.text), column == .room {
+                    if next.box.minX - token.box.maxX < 0.015,
+                       let column = Column.identify(token.text + next.text) {
                         found[column] = token.box.union(next.box).midX
                     }
                 }

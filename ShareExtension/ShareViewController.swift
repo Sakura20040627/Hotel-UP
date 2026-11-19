@@ -26,14 +26,23 @@ final class ShareViewController: UIViewController {
         ])
         let providers = (extensionContext?.inputItems as? [NSExtensionItem] ?? [])
             .flatMap { $0.attachments ?? [] }
-            .filter { $0.hasItemConformingToTypeIdentifier(UTType.pdf.identifier) }
+            .filter {
+                $0.hasItemConformingToTypeIdentifier(UTType.pdf.identifier) ||
+                $0.hasItemConformingToTypeIdentifier(UTType.fileURL.identifier) ||
+                $0.registeredTypeIdentifiers.contains(UTType.data.identifier)
+            }
         Task {
+            guard (try? Inbox.folder()) != nil else {
+                status.text = "分享扩展无法访问共享容器。请先在 LINE 中将 PDF 存到「文件」，再从 HotelFlow 导入。"
+                done.isEnabled = true
+                return
+            }
             var received = 0
             for provider in providers {
                 if (try? await Self.receive(provider)) != nil { received += 1 }
             }
             if received == 0 {
-                status.text = "无法接收 PDF。请确认文件已下载并检查 HotelFlow 的 App Group 签名。"
+                status.text = "未收到本地 PDF。请在 LINE 中打开并下载 PDF，再使用系统分享，或先存储到「文件」。"
             } else if received < providers.count {
                 status.text = "已接收 \(received) 份 PDF，部分文件失败。打开 HotelFlow 查看。"
             } else {
@@ -44,32 +53,61 @@ final class ShareViewController: UIViewController {
     }
 
     private static func receive(_ provider: NSItemProvider) async throws {
-        do {
-            try await receiveFile(provider)
-        } catch {
-            try await receiveData(provider)
+        if provider.hasItemConformingToTypeIdentifier(UTType.pdf.identifier) {
+            if let data = try? await readFile(provider, type: .pdf) {
+                try Inbox.enqueue(data)
+                return
+            }
+            if let data = try? await readData(provider, type: .pdf) {
+                try Inbox.enqueue(data)
+                return
+            }
         }
+        if provider.hasItemConformingToTypeIdentifier(UTType.fileURL.identifier),
+           let data = try? await readData(provider, type: .fileURL) {
+            try Inbox.enqueue(data)
+            return
+        }
+        if provider.registeredTypeIdentifiers.contains(UTType.data.identifier) {
+            let data: Data
+            if let file = try? await readFile(provider, type: .data) { data = file }
+            else { data = try await readData(provider, type: .data) }
+            try Inbox.enqueue(data)
+            return
+        }
+        throw PDFInput.Failure.invalid
     }
 
-    private static func receiveFile(_ provider: NSItemProvider) async throws {
-        let _: URL = try await withCheckedThrowingContinuation { continuation in
-            _ = provider.loadFileRepresentation(forTypeIdentifier: UTType.pdf.identifier) { url, error in
+    private static func readFile(_ provider: NSItemProvider, type: UTType) async throws -> Data {
+        try await withCheckedThrowingContinuation { continuation in
+            _ = provider.loadFileRepresentation(forTypeIdentifier: type.identifier) { url, error in
                 continuation.resume(with: Result {
-                    guard let url else { throw error ?? CocoaError(.fileReadUnknown) }
-                    let scoped = url.startAccessingSecurityScopedResource()
-                    defer { if scoped { url.stopAccessingSecurityScopedResource() } }
-                    return try Inbox.enqueue(Data(contentsOf: url))
+                    guard let url else { throw error ?? PDFInput.Failure.invalid }
+                    return try PDFInput.read(url)
                 })
             }
         }
     }
 
-    private static func receiveData(_ provider: NSItemProvider) async throws {
-        let _: URL = try await withCheckedThrowingContinuation { continuation in
-            _ = provider.loadDataRepresentation(forTypeIdentifier: UTType.pdf.identifier) { bytes, error in
+    private static func readData(_ provider: NSItemProvider, type: UTType) async throws -> Data {
+        if type == .fileURL {
+            return try await withCheckedThrowingContinuation { continuation in
+                provider.loadItem(forTypeIdentifier: type.identifier, options: nil) { item, error in
+                    continuation.resume(with: Result {
+                        if let url = item as? URL { return try PDFInput.read(url) }
+                        if let data = item as? Data,
+                           let url = URL(dataRepresentation: data, relativeTo: nil) { return try PDFInput.read(url) }
+                        throw error ?? PDFInput.Failure.invalid
+                    })
+                }
+            }
+        }
+        return try await withCheckedThrowingContinuation { continuation in
+            _ = provider.loadDataRepresentation(forTypeIdentifier: type.identifier) { data, error in
                 continuation.resume(with: Result {
-                    guard let bytes else { throw error ?? CocoaError(.fileReadUnknown) }
-                    return try Inbox.enqueue(bytes)
+                    guard let data else { throw error ?? PDFInput.Failure.invalid }
+                    try PDFInput.validate(data)
+                    return data
                 })
             }
         }

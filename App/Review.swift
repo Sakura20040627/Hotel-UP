@@ -51,6 +51,11 @@ struct Review: View {
                 Section {
                     DatePicker("清扫日期", selection: $draft.date, displayedComponents: .date)
                     Toggle("已核对清扫日期", isOn: $draft.dateConfirmed)
+                    if draft.rooms.isEmpty {
+                        Text("PDF 已打开，但未识别到清扫表。请查看原文并添加房间后确认。")
+                            .foregroundStyle(.orange)
+                        Button("手动添加房间", systemImage: "plus") { draft.rooms.append(Room(number: "")) }
+                    }
                     if draft.unresolved > 0 { Text("\(draft.unresolved) 页未识别，请查看原始 PDF 并补齐。").foregroundStyle(.orange) }
                     if !settings.employee.isEmpty {
                         Text("匹配 \(settings.employee) · \(draft.rooms.filter(settings.owns).count) 间")
@@ -102,7 +107,9 @@ struct Review: View {
                         }
                     }
                 }
-                Button("添加遗漏房间", systemImage: "plus") { draft.rooms.append(Room(number: "")) }
+                if !draft.rooms.isEmpty {
+                    Button("添加遗漏房间", systemImage: "plus") { draft.rooms.append(Room(number: "")) }
+                }
                 Toggle("已核对房号、任务、担当者和修订差异", isOn: $checked)
                 Button("确认导入") { confirm(reviewedDraft()) }.disabled(!valid)
             }

@@ -66,7 +66,7 @@ struct Dashboard: View {
     @State private var loaded = false
     @State private var blocked = false
     @State private var showingImporter = false
-    @State private var importingBackup = false
+    @State private var choosingPDF = false
     @State private var export = false
     @State private var backup: BackupFile?
     @State private var restoreCandidate: Backup?
@@ -86,7 +86,7 @@ struct Dashboard: View {
     private var today: Date { Calendar.current.startOfDay(for: .now) }
     private var todayRooms: [Room] { ledger.days.first { $0.date == today }?.rooms ?? [] }
     private var personal: [Room] {
-        Priority.sorted(todayRooms.filter { ledger.settings.owns($0) && !$0.removed && !$0.superseded })
+        Priority.sorted(todayRooms.filter { Settings.isPersonal($0) && !$0.removed && !$0.superseded })
     }
 
     var body: some View {
@@ -116,22 +116,24 @@ struct Dashboard: View {
             NavigationStack { historyView }
                 .tabItem { Label("历史", systemImage: "clock.arrow.circlepath") }.tag(2)
         }
-        .fileImporter(isPresented: $showingImporter, allowedContentTypes: importingBackup ? [.json] : [.pdf, .data]) { result in
-            switch result {
-            case .success(let url):
-                if importingBackup {
-                    do {
-                        let access = url.startAccessingSecurityScopedResource()
-                        defer { if access { url.stopAccessingSecurityScopedResource() } }
-                        restoreCandidate = try JSONDecoder().decode(Backup.self, from: Data(contentsOf: url))
-                    } catch { message = "无法读取备份。" }
-                } else {
-                    importFile(url, pending: false)
+        .background {
+            PDFPickerHost(requested: choosingPDF) { url in
+                choosingPDF = false
+                if let url { importFile(url, pending: false) }
+                else {
+                    importStatus = "未选中文件。"
+                    checkInbox()
                 }
-            case .failure:
-                if importingBackup { message = "无法读取备份。" }
-                else { importStatus = "系统未能打开文件。请确认 PDF 已下载后重试。" }
             }
+            .frame(width: 1, height: 1)
+        }
+        .fileImporter(isPresented: $showingImporter, allowedContentTypes: [.json]) { result in
+            do {
+                let url = try result.get()
+                let access = url.startAccessingSecurityScopedResource()
+                defer { if access { url.stopAccessingSecurityScopedResource() } }
+                restoreCandidate = try JSONDecoder().decode(Backup.self, from: Data(contentsOf: url))
+            } catch { message = "无法读取备份。" }
         }
         .fileExporter(isPresented: $export, document: backup, contentType: .json, defaultFilename: "HotelFlow-Backup") { result in
             if case .failure = result { message = "无法导出备份。" }
@@ -157,7 +159,7 @@ struct Dashboard: View {
             TodayHeader(
                 date: today,
                 hotel: ledger.settings.hotel,
-                employee: ledger.settings.employee,
+                employee: Settings.personalEmployee,
                 total: personal.count,
                 priority: personal.filter { $0.kind == .turnover }.count,
                 completed: personal.filter { $0.work.stage == .done }.count,
@@ -165,12 +167,13 @@ struct Dashboard: View {
                 importStatus: importStatus,
                 importDisabled: blocked || busy || draft != nil,
                 importPDF: {
-                    importingBackup = false
-                    showingImporter = true
+                    importStatus = nil
+                    choosingPDF = true
                 },
                 openSettings: { settings = true }
             )
             .listRowSeparator(.hidden)
+            .listRowBackground(Color.clear)
             Section("我的房间") {
                 ForEach(personal) { room in
                     NavigationLink { roomDetail(room.id) } label: { card(room) }
@@ -191,23 +194,7 @@ struct Dashboard: View {
                 }
                 if personal.isEmpty { Text("暂无个人任务").foregroundStyle(.secondary) }
             }
-            let unassigned = todayRooms.filter { Settings.normalized($0.employee).isEmpty && !$0.removed && !$0.superseded }
-            if !unassigned.isEmpty {
-                Section("未分配") {
-                    ForEach(unassigned) { room in
-                        NavigationLink { roomDetail(room.id) } label: { card(room) }
-                    }
-                }
-            }
-            let others = todayRooms.filter { !Settings.normalized($0.employee).isEmpty && !ledger.settings.owns($0) && !$0.removed && !$0.superseded }
-            if !others.isEmpty {
-                Section("其他担当者") {
-                    ForEach(others) { room in
-                        NavigationLink { roomDetail(room.id) } label: { card(room) }
-                    }
-                }
-            }
-            let removed = todayRooms.filter { $0.removed && !$0.superseded }
+            let removed = todayRooms.filter { Settings.isPersonal($0) && $0.removed && !$0.superseded }
             if !removed.isEmpty {
                 Section("已移除") {
                     ForEach(removed) { room in
@@ -216,7 +203,7 @@ struct Dashboard: View {
                 }
             }
         }
-        .listStyle(.plain)
+        .listStyle(.insetGrouped)
         .navigationBarTitleDisplayMode(.inline)
         .toolbar {
             ToolbarItem(placement: .topBarTrailing) { Button("设置", systemImage: "gearshape") { settings = true } }
@@ -289,9 +276,6 @@ struct Dashboard: View {
                             Text("自动").tag(Optional<RoomType>.none)
                             ForEach(RoomType.allCases.filter { $0 != .special }) { Text($0.rawValue).tag(Optional($0)) }
                         }.disabled(room.number == "1103")
-                        if !ledger.settings.employee.isEmpty && !ledger.settings.owns(room) {
-                            Button("认领") { edit(id, audit: "手动认领") { $0.employee = ledger.settings.employee } }
-                        }
                         Button("移除任务", role: .destructive) { edit(id, audit: "手动移除") { $0.removed = true } }
                         if let source = room.source, let revision = room.revision, let url = try? pdfURL(revision) {
                             Button("查看原始位置") { preview = PDFPreview(url: url, source: source) }
@@ -357,7 +341,10 @@ struct Dashboard: View {
             Section("按房间") {
                 ForEach(rooms) { room in NavigationLink(room.number) { roomDetail(room.id) } }
             }
-        }.navigationTitle("备品")
+        }
+        .listStyle(.insetGrouped)
+        .navigationTitle("备品")
+        .navigationBarTitleDisplayMode(.inline)
     }
 
     private var historyView: some View {
@@ -367,7 +354,7 @@ struct Dashboard: View {
             ForEach(ledger.days.sorted { $0.date > $1.date }.filter {
                 !filterHistory || Calendar.current.isDate($0.date, inSameDayAs: historyDate)
             }) { day in
-                let owned = day.rooms.filter { ledger.settings.owns($0) || $0.work.started != nil }
+                let owned = day.rooms.filter(Settings.isPersonal)
                 let done = owned.filter { $0.work.stage == .done }
                 let total = owned.reduce(0.0) { $0 + $1.work.elapsed(at: .now) }
                 let completeTotal = done.reduce(0.0) { $0 + $1.work.elapsed(at: .now) }
@@ -384,15 +371,17 @@ struct Dashboard: View {
                     }
                 }
             }
-        }.navigationTitle("历史")
+        }
+        .listStyle(.insetGrouped)
+        .navigationTitle("历史")
+        .navigationBarTitleDisplayMode(.inline)
     }
 
     private var settingsView: some View {
         NavigationStack {
             Form {
                 TextField("酒店", text: settingsBinding(\.hotel))
-                TextField("担当者", text: settingsBinding(\.employee))
-                TextField("姓名别名，用英文逗号分隔", text: settingsBinding(\.aliases))
+                LabeledContent("担当者", value: Settings.personalEmployee)
                 TextField("1103 容量（未配置可留空）", text: Binding(
                     get: { ledger.settings.specialCapacity.map(String.init) ?? "" },
                     set: { input in
@@ -402,7 +391,6 @@ struct Dashboard: View {
                 Button("备份全部本地记录和 PDF") { settings = false; createBackup() }
                 Button("从备份恢复") {
                     settings = false
-                    importingBackup = true
                     showingImporter = true
                 }
             }.navigationTitle("设置").toolbar { Button("完成") { settings = false } }
@@ -479,7 +467,6 @@ struct Dashboard: View {
             Picker("任务类型", selection: room.kind) {
                 ForEach(Kind.allCases) { Text($0.rawValue).tag($0) }
             }
-            TextField("担当者", text: room.employee)
             TextField("入住人数", text: Binding(
                 get: { room.wrappedValue.guests.map(String.init) ?? "" },
                 set: { value in
@@ -503,7 +490,7 @@ struct Dashboard: View {
 
     private func checkInbox() {
         guard loaded, !blocked, !busy, draft == nil, !settings, !showingImporter,
-              !export, preview == nil, message == nil else { return }
+              !choosingPDF, !export, preview == nil, message == nil else { return }
         if !externalPDFs.isEmpty {
             let url = externalPDFs.removeFirst()
             selectedTab = 0
@@ -547,7 +534,7 @@ struct Dashboard: View {
                 try data.write(to: url, options: [.atomic, .completeFileProtectionUntilFirstUserAuthentication])
                 importStatus = nil
                 draft = Draft(id: id, date: parsed.date ?? today, dateConfirmed: parsed.date != nil,
-                              rooms: parsed.rooms, unresolved: parsed.unresolved, url: url, pending: pending ? source : nil)
+                              rooms: parsed.rooms.filter(Settings.isPersonal), unresolved: parsed.unresolved, url: url, pending: pending ? source : nil)
             } catch {
                 if pending { rejected.insert(source) }
                 let detail = (error as? PDFInput.Failure)?.errorDescription ?? "无法打开或保存 PDF。请先将文件保存到本机「文件」App，再重试。"
@@ -558,9 +545,7 @@ struct Dashboard: View {
     }
 
     private func reviewSheet(_ value: Draft) -> some View {
-        Review(draft: value, settings: ledger.settings, days: ledger.days, selectEmployee: { name in
-            settingsBinding(\.employee).wrappedValue = name
-        }) { confirmed in
+        Review(draft: value, days: ledger.days) { confirmed in
             var next = ledger
             let date = Calendar.current.startOfDay(for: confirmed.date)
             let rooms = confirmed.rooms.map { room in
@@ -571,7 +556,9 @@ struct Dashboard: View {
             }
             let revision = Revision(id: confirmed.id, date: date, rooms: rooms, unresolved: confirmed.unresolved)
             if let index = next.days.firstIndex(where: { $0.date == date }) {
-                next.days[index].rooms = ImportDiff.merge(next.days[index].rooms, rooms)
+                let previous = next.days[index].rooms
+                next.days[index].rooms = ImportDiff.merge(previous.filter(Settings.isPersonal), rooms)
+                    + previous.filter { !Settings.isPersonal($0) }
                 next.days[index].revisions.append(revision)
             } else {
                 next.days.append(Day(date: date, rooms: rooms, revisions: [revision]))

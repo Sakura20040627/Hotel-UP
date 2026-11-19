@@ -3,30 +3,23 @@ import PDFKit
 
 struct Review: View {
     @State var draft: Draft
-    let settings: Settings
     let days: [Day]
     let confirm: (Draft) -> Void
     let cancel: () -> Void
-    let selectEmployee: (String) -> Void
-    @State private var selectedEmployee: String
     @State private var checked = false
     @State private var preview: PDFPreview?
     let original: [Room]
 
-    init(draft: Draft, settings: Settings, days: [Day], selectEmployee: @escaping (String) -> Void,
-         confirm: @escaping (Draft) -> Void, cancel: @escaping () -> Void) {
+    init(draft: Draft, days: [Day], confirm: @escaping (Draft) -> Void, cancel: @escaping () -> Void) {
         _draft = State(initialValue: draft)
         original = draft.rooms
-        self.settings = settings
         self.days = days
-        _selectedEmployee = State(initialValue: settings.employee)
-        self.selectEmployee = selectEmployee
         self.confirm = confirm
         self.cancel = cancel
     }
 
     private var old: [Room] {
-        days.first { Calendar.current.isDate($0.date, inSameDayAs: draft.date) }?.rooms ?? []
+        days.first { Calendar.current.isDate($0.date, inSameDayAs: draft.date) }?.rooms.filter(Settings.isPersonal) ?? []
     }
     private var valid: Bool {
         draft.dateConfirmed && checked && !draft.rooms.isEmpty &&
@@ -57,25 +50,12 @@ struct Review: View {
                     DatePicker("清扫日期", selection: $draft.date, displayedComponents: .date)
                     Toggle("已核对清扫日期", isOn: $draft.dateConfirmed)
                     if draft.rooms.isEmpty {
-                        Text("PDF 已打开，但未识别到清扫表。请查看原文并添加房间后确认。")
+                        Text("PDF 已打开，但未找到柯偉航的任务。可查看原文；如有漏识别，可手动补记。")
                             .foregroundStyle(.orange)
-                        Button("手动添加房间", systemImage: "plus") { draft.rooms.append(Room(number: "")) }
+                        Button("手动添加房间", systemImage: "plus") { draft.rooms.append(Room(number: "", employee: Settings.personalEmployee)) }
                     }
                     if draft.unresolved > 0 { Text("\(draft.unresolved) 页未识别，请查看原始 PDF 并补齐。").foregroundStyle(.orange) }
-                    let employees = Set(draft.rooms.map { Settings.normalized($0.employee) }).subtracting([""]).sorted()
-                    if !employees.isEmpty {
-                        Menu {
-                            ForEach(employees, id: \.self) { name in
-                                Button(name) { selectedEmployee = name }
-                            }
-                        } label: {
-                            LabeledContent("我的担当者", value: selectedEmployee.isEmpty ? "请选择" : selectedEmployee)
-                        }
-                    }
-                    if !selectedEmployee.isEmpty {
-                        let matching = draft.rooms.filter { Settings.normalized($0.employee) == Settings.normalized(selectedEmployee) }.count
-                        Text("匹配 \(selectedEmployee) · \(matching) 间")
-                    }
+                    LabeledContent(Settings.personalEmployee, value: "\(draft.rooms.count) 间")
                     Button("查看整份 PDF") { preview = PDFPreview(url: draft.url) }
                 }
                 if !old.isEmpty {
@@ -92,7 +72,6 @@ struct Review: View {
                         Picker("类型", selection: $room.kind) {
                             ForEach(Kind.allCases) { Text($0.rawValue).tag($0) }
                         }
-                        TextField("担当者（空白为未分配）", text: $room.employee)
                         TextField("入住人数", text: Binding(
                             get: { room.guests.map(String.init) ?? "" },
                             set: { text in
@@ -124,15 +103,13 @@ struct Review: View {
                     }
                 }
                 if !draft.rooms.isEmpty {
-                    Button("添加遗漏房间", systemImage: "plus") { draft.rooms.append(Room(number: "")) }
+                    Button("添加遗漏房间", systemImage: "plus") { draft.rooms.append(Room(number: "", employee: Settings.personalEmployee)) }
                 }
                 Toggle("已核对房号、任务、担当者和修订差异", isOn: $checked)
-                Button("确认导入") {
-                    if selectedEmployee != settings.employee { selectEmployee(selectedEmployee) }
-                    confirm(reviewedDraft())
-                }.disabled(!valid)
+                Button("确认导入") { confirm(reviewedDraft()) }.disabled(!valid)
             }
             .navigationTitle("校对清扫表")
+            .navigationBarTitleDisplayMode(.inline)
             .toolbar { Button("取消", action: cancel) }
         }
         .interactiveDismissDisabled()

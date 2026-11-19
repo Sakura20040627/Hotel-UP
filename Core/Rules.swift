@@ -119,6 +119,12 @@ struct Audit: Codable, Equatable {
 }
 
 struct Settings: Codable, Equatable {
+    static let personalEmployee = "柯偉航"
+
+    static func isPersonal(_ room: Room) -> Bool {
+        normalized(room.employee) == personalEmployee
+    }
+
     var employee = Bundle.main.object(forInfoDictionaryKey: "HotelFlowEmployee") as? String ?? ""
     var aliases = ""
     var specialCapacity: Int?

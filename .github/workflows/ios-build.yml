@@ -1,0 +1,98 @@
+name: HotelFlow iOS
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  ios:
+    runs-on: macos-26
+    timeout-minutes: 35
+    env:
+      HOTELFLOW_BUNDLE_ID: ${{ vars.HOTELFLOW_BUNDLE_ID || 'com.hotelflow.ios' }}
+      HOTELFLOW_APP_GROUP: ${{ vars.HOTELFLOW_APP_GROUP || 'group.com.hotelflow.ios' }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Select Xcode and print versions
+        shell: bash
+        run: |
+          set -euo pipefail
+          found=
+          for candidate in /Applications/Xcode*.app; do
+            developer="$candidate/Contents/Developer"
+            sdk="$(DEVELOPER_DIR="$developer" xcrun --sdk iphoneos --show-sdk-version 2>/dev/null)" || continue
+            if [[ "$sdk" == 26.* ]]; then
+              found="$developer"
+              break
+            fi
+          done
+          test -n "$found"
+          echo "DEVELOPER_DIR=$found" >> "$GITHUB_ENV"
+          export DEVELOPER_DIR="$found"
+          sw_vers
+          xcodebuild -version
+          xcrun swift --version
+          xcrun --sdk iphoneos --show-sdk-version
+      - name: Generate project
+        run: |
+          brew list xcodegen >/dev/null 2>&1 || brew install xcodegen
+          xcodegen --version
+          xcodegen generate
+          xcodebuild -list -project HotelFlow.xcodeproj
+      - name: Build app and extension for simulator and run XCTest
+        shell: bash
+        run: |
+          set -euo pipefail
+          simulator="$(xcrun simctl list devices available -j | python3 -c 'import json,sys; d=json.load(sys.stdin)["devices"]; print(next(x["udid"] for runtime, xs in sorted(d.items(), reverse=True) if "iOS-26" in runtime for x in xs if x["name"].startswith("iPhone")))' )"
+          mkdir -p build
+          xcodebuild test -project HotelFlow.xcodeproj -scheme HotelFlow \
+            -destination "platform=iOS Simulator,id=$simulator" \
+            -parallel-testing-enabled NO -resultBundlePath build/HotelFlow.xcresult \
+            CODE_SIGNING_ALLOWED=NO | tee build/tests.log
+      - name: Compile device Release and package unsigned IPA
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p build/package/Payload
+          xcodebuild build -project HotelFlow.xcodeproj -scheme HotelFlow -configuration Release \
+            -destination 'generic/platform=iOS' -derivedDataPath build/device \
+            "HOTELFLOW_BUNDLE_ID=$HOTELFLOW_BUNDLE_ID" "HOTELFLOW_APP_GROUP=$HOTELFLOW_APP_GROUP" \
+            CODE_SIGNING_ALLOWED=NO | tee build/device.log
+          app=build/device/Build/Products/Release-iphoneos/HotelFlow.app
+          test -f "$app/HotelFlow"
+          test -f "$app/PlugIns/HotelFlowShare.appex/HotelFlowShare"
+          xcrun vtool -show-build "$app/HotelFlow" | grep -E 'platform IOS$'
+          ditto "$app" build/package/Payload/HotelFlow.app
+          (cd build/package && ditto -c -k --keepParent Payload ../HotelFlow-unsigned.ipa)
+          unzip -t build/HotelFlow-unsigned.ipa
+      - name: Sign device IPA when explicitly configured
+        if: github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main' && vars.HOTELFLOW_SIGN_ENABLED == 'true'
+        env:
+          HOTELFLOW_TEAM: ${{ secrets.HOTELFLOW_TEAM }}
+          HOTELFLOW_CERTIFICATE: ${{ secrets.HOTELFLOW_CERTIFICATE }}
+          HOTELFLOW_CERTIFICATE_PASSWORD: ${{ secrets.HOTELFLOW_CERTIFICATE_PASSWORD }}
+          HOTELFLOW_APP_PROFILE: ${{ secrets.HOTELFLOW_APP_PROFILE }}
+          HOTELFLOW_SHARE_PROFILE: ${{ secrets.HOTELFLOW_SHARE_PROFILE }}
+        run: bash ci/sign.sh
+      - uses: actions/upload-artifact@v4
+        with:
+          name: HotelFlow-unsigned-IPA
+          path: build/HotelFlow-unsigned.ipa
+          if-no-files-found: error
+      - uses: actions/upload-artifact@v4
+        if: github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main' && vars.HOTELFLOW_SIGN_ENABLED == 'true'
+        with:
+          name: HotelFlow-signed-IPA
+          path: build/HotelFlow-signed.ipa
+          if-no-files-found: error
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: HotelFlow-build-and-test-logs
+          path: |
+            build/*.log
+            build/*.xcresult

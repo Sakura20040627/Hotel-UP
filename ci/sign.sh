@@ -29,8 +29,8 @@ printf '%s' "$HOTELFLOW_SHARE_PROFILE" | base64 -D > "$share/embedded.mobileprov
 sign() {
   local bundle="$1" identifier="$2" profile="$scratch/profile.plist" entitlements="$scratch/entitlements.plist"
   security cms -D -i "$bundle/embedded.mobileprovision" > "$profile"
-  python3 - "$profile" "$entitlements" "$identifier" <<'PY'
-import datetime, os, plistlib, sys
+  python3 - "$profile" "$entitlements" "$identifier" "$identity" <<'PY'
+import datetime, hashlib, os, plistlib, sys
 with open(sys.argv[1], 'rb') as stream:
     profile = plistlib.load(stream)
 team = os.environ['HOTELFLOW_TEAM']
@@ -38,6 +38,8 @@ group = os.environ['HOTELFLOW_APP_GROUP']
 ent = profile['Entitlements']
 assert profile['ExpirationDate'] > datetime.datetime.now(datetime.timezone.utc).replace(tzinfo=None), 'Expired profile'
 assert team in profile['TeamIdentifier'], 'Team ID mismatch'
+fingerprints = {hashlib.sha1(cert).hexdigest() for cert in profile['DeveloperCertificates']}
+assert sys.argv[4].lower() in fingerprints, 'Certificate is not authorized by the provisioning profile'
 assert ent['application-identifier'] == f'{team}.{sys.argv[3]}', 'An explicit profile matching the bundle ID is required'
 assert group in ent.get('com.apple.security.application-groups', []), 'App Group missing in profile'
 ent['com.apple.security.application-groups'] = [group]

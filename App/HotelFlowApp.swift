@@ -202,7 +202,8 @@ struct Dashboard: View {
             HStack {
                 Text(room.number).font(.title2.bold())
                 Spacer()
-                Text(room.kind.rawValue).font(.subheadline.weight(.semibold))
+                Text(room.kind.cleanable ? "P\(room.kind.priority) · \(room.kind.rawValue)" : room.kind.rawValue)
+                    .font(.subheadline.weight(.semibold))
             }
             Text("\(room.type.rawValue) · \(result.guests.map(String.init) ?? "未知") 人（\(result.guestSource)）")
             Text("双人床 \(result.doubles) · 单人床 \(result.singles) · 备品 \(result.counts.values.reduce(0, +)) 件")
@@ -245,6 +246,9 @@ struct Dashboard: View {
                         }
                     }
                     Section("清扫步骤 \(room.work.checked.count)/\(Self.steps.count)") {
+                        if let current = room.work.order.first(where: { !room.work.checked.contains($0) }) {
+                            LabeledContent("当前步骤", value: Self.steps[current])
+                        }
                         ForEach(room.work.order, id: \.self) { index in
                             Toggle(Self.steps[index], isOn: Binding(get: { room.work.checked.contains(index) }, set: { checked in
                                 edit(id) { if checked { $0.work.checked.insert(index) } else { $0.work.checked.remove(index) } }

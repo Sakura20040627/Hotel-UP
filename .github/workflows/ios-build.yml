@@ -15,6 +15,8 @@ jobs:
     env:
       HOTELFLOW_BUNDLE_ID: ${{ vars.HOTELFLOW_BUNDLE_ID || 'com.hotelflow.ios' }}
       HOTELFLOW_APP_GROUP: ${{ vars.HOTELFLOW_APP_GROUP || 'group.com.hotelflow.ios' }}
+      HOTELFLOW_HOTEL: ${{ github.event.repository.private && vars.HOTELFLOW_HOTEL || '' }}
+      HOTELFLOW_EMPLOYEE: ${{ github.event.repository.private && vars.HOTELFLOW_EMPLOYEE || '' }}
     steps:
       - uses: actions/checkout@v5
       - name: Select Xcode and print versions
@@ -53,6 +55,7 @@ jobs:
           xcodebuild build -project HotelFlow.xcodeproj -scheme HotelFlow -configuration Release \
             -destination 'generic/platform=iOS' -derivedDataPath build/device \
             "HOTELFLOW_BUNDLE_ID=$HOTELFLOW_BUNDLE_ID" "HOTELFLOW_APP_GROUP=$HOTELFLOW_APP_GROUP" \
+            "HOTELFLOW_HOTEL=$HOTELFLOW_HOTEL" "HOTELFLOW_EMPLOYEE=$HOTELFLOW_EMPLOYEE" \
             CODE_SIGNING_ALLOWED=NO | tee build/device.log
           app=build/device/Build/Products/Release-iphoneos/HotelFlow.app
           test -f "$app/HotelFlow"

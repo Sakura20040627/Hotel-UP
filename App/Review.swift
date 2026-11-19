@@ -9,6 +9,16 @@ struct Review: View {
     let cancel: () -> Void
     @State private var checked = false
     @State private var preview: PDFPreview?
+    let original: [Room]
+
+    init(draft: Draft, settings: Settings, days: [Day], confirm: @escaping (Draft) -> Void, cancel: @escaping () -> Void) {
+        _draft = State(initialValue: draft)
+        original = draft.rooms
+        self.settings = settings
+        self.days = days
+        self.confirm = confirm
+        self.cancel = cancel
+    }
 
     private var old: [Room] {
         days.first { Calendar.current.isDate($0.date, inSameDayAs: draft.date) }?.rooms ?? []
@@ -17,6 +27,22 @@ struct Review: View {
         draft.dateConfirmed && checked && !draft.rooms.isEmpty &&
         Set(draft.rooms.map(\.number)).count == draft.rooms.count &&
         draft.rooms.allSatisfy { $0.number.range(of: #"^[0-9]{3,4}$"#, options: .regularExpression) != nil }
+    }
+
+    private func reviewedDraft() -> Draft {
+        var checked = draft
+        for index in checked.rooms.indices {
+            let room = checked.rooms[index]
+            guard let previous = original.first(where: { $0.id == room.id }) else {
+                checked.rooms[index].audit.append(Audit(description: "校对时手动添加"))
+                continue
+            }
+            if room != previous {
+                let prior = "房号 \(previous.number) · \(previous.kind.rawValue) · \(previous.employee) · \(previous.guests.map(String.init) ?? "未填写") 人 · \(previous.notes)"
+                checked.rooms[index].audit.append(Audit(description: "校对时修改 · 原值 \(prior)"))
+            }
+        }
+        return checked
     }
 
     var body: some View {
@@ -67,7 +93,7 @@ struct Review: View {
                 }
                 Button("添加遗漏房间", systemImage: "plus") { draft.rooms.append(Room(number: "")) }
                 Toggle("已核对房号、任务、担当者和修订差异", isOn: $checked)
-                Button("确认导入") { confirm(draft) }.disabled(!valid)
+                Button("确认导入") { confirm(reviewedDraft()) }.disabled(!valid)
             }
             .navigationTitle("校对清扫表")
             .toolbar { Button("取消", action: cancel) }

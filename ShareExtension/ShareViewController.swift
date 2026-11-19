@@ -44,6 +44,14 @@ final class ShareViewController: UIViewController {
     }
 
     private static func receive(_ provider: NSItemProvider) async throws {
+        do {
+            try await receiveFile(provider)
+        } catch {
+            try await receiveData(provider)
+        }
+    }
+
+    private static func receiveFile(_ provider: NSItemProvider) async throws {
         let _: URL = try await withCheckedThrowingContinuation { continuation in
             _ = provider.loadFileRepresentation(forTypeIdentifier: UTType.pdf.identifier) { url, error in
                 continuation.resume(with: Result {
@@ -51,6 +59,17 @@ final class ShareViewController: UIViewController {
                     let scoped = url.startAccessingSecurityScopedResource()
                     defer { if scoped { url.stopAccessingSecurityScopedResource() } }
                     return try Inbox.enqueue(Data(contentsOf: url))
+                })
+            }
+        }
+    }
+
+    private static func receiveData(_ provider: NSItemProvider) async throws {
+        let _: URL = try await withCheckedThrowingContinuation { continuation in
+            _ = provider.loadDataRepresentation(forTypeIdentifier: UTType.pdf.identifier) { bytes, error in
+                continuation.resume(with: Result {
+                    guard let bytes else { throw error ?? CocoaError(.fileReadUnknown) }
+                    return try Inbox.enqueue(bytes)
                 })
             }
         }
